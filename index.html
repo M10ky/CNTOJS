@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connecteo — Gestion de Stock</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ═══ GLOBAL LOADER ═══ -->
+<div id="global-loader">
+  <div class="loader-logo-wrap">
+    <img src="data:image/jpeg;base64,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" alt="Connecteo" style="height:52px;border-radius:12px;box-shadow:0 4px 16px rgba(0,201,167,.4)">
+    <div class="loader-brand">Stock</div>
+  </div>
+  <div class="spinner"></div>
+  <div class="loader-msg" id="loader-msg">Vérification de la session…</div>
+</div>
+
+<!-- ═══ LOGIN ═══ -->
+<div class="login-page" id="login-wrap" style="display:none">
+  <div class="login-card">
+    <div class="login-logo-area">
+      <div class="login-logo-main">
+        <img src="data:image/jpeg;base64,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" alt="Connecteo" style="height:64px;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.15)">
+      </div>
+      <div class="login-tagline" style="margin-top:12px">Système multi-départements de gestion des stocks</div>
+    </div>
+    <div id="login-alert" style="display:none"></div>
+    <div class="login-divider">Connexion sécurisée</div>
+    <div class="lf-row">
+      <label class="lf-lbl" for="login-email">Adresse e-mail professionnelle</label>
+      <div class="lf-input-wrap">
+        <i class="ti ti-mail prefix"></i>
+        <input id="login-email" type="email" autocomplete="username" placeholder="vous@connecteo.mg" onkeydown="if(event.key==='Enter')document.getElementById('login-pwd').focus()">
+      </div>
+    </div>
+    <div class="lf-row">
+      <label class="lf-lbl" for="login-pwd">Mot de passe</label>
+      <div class="lf-input-wrap">
+        <i class="ti ti-lock prefix"></i>
+        <input id="login-pwd" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
+        <button class="pwd-toggle" onclick="togglePwd()" type="button" tabindex="-1"><i class="ti ti-eye" id="eye-icon"></i></button>
+      </div>
+    </div>
+    <div class="login-meta">
+      <label class="login-remember"><input type="checkbox" id="remember-me" checked> Rester connecté</label>
+      <button class="login-forgot" onclick="forgotPassword()">Mot de passe oublié ?</button>
+    </div>
+    <button class="login-btn" id="login-btn" onclick="doLogin()">
+      <i class="ti ti-login" id="login-btn-icon"></i>
+      <span id="login-btn-text">Se connecter</span>
+    </button>
+    <div class="login-footer">
+      <div class="security-badges">
+        <span class="sec-badge"><i class="ti ti-shield-check"></i> JWT sécurisé</span>
+        <span class="sec-badge"><i class="ti ti-lock"></i> Chiffrement TLS</span>
+        <span class="sec-badge"><i class="ti ti-database"></i> RLS activé</span>
+      </div>
+      <div style="margin-top:10px">Connecteo · <strong>© 2026</strong> · Accès réservé</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ SEARCH OVERLAY ═══ -->
+<div id="search-overlay" onclick="closeSearch(event)">
+  <div class="search-modal" onclick="event.stopPropagation()">
+    <div class="search-input-row">
+      <i class="ti ti-search si"></i>
+      <input id="search-main-input" type="text" placeholder="Rechercher un produit, mouvement, demande…" autocomplete="off" oninput="onSearchInput(this.value)" onkeydown="onSearchKeydown(event)">
+      <div class="search-kbd-hint">
+        <kbd>↑↓</kbd> <span style="font-size:10px;color:var(--text3)">naviguer</span>
+        <kbd>Entrée</kbd> <span style="font-size:10px;color:var(--text3)">ouvrir</span>
+        <kbd>Esc</kbd> <span style="font-size:10px;color:var(--text3)">fermer</span>
+      </div>
+    </div>
+    <div class="search-filters-row" id="search-filters-row">
+      <span class="sf-label">Filtres :</span>
+      <span class="sf-chip" id="sf-all" onclick="setSF('all')"><i class="ti ti-layout-grid" style="font-size:11px"></i> Tout</span>
+      <span class="sf-chip" id="sf-produits" onclick="setSF('produits')"><i class="ti ti-package" style="font-size:11px"></i> Produits</span>
+      <span class="sf-chip" id="sf-mouvements" onclick="setSF('mouvements')"><i class="ti ti-arrows-exchange" style="font-size:11px"></i> Mouvements</span>
+      <span class="sf-chip" id="sf-demandes" onclick="setSF('demandes')"><i class="ti ti-clipboard-list" style="font-size:11px"></i> Demandes</span>
+      <span class="sf-divider"></span>
+      <span class="sf-chip" id="sf-it" onclick="setSF('it')"><i class="ti ti-device-laptop" style="font-size:11px"></i> IT</span>
+      <span class="sf-chip" id="sf-fin" onclick="setSF('fin')"><i class="ti ti-cash" style="font-size:11px"></i> Finance</span>
+    </div>
+    <div class="search-results-wrap" id="search-results-wrap">
+      <div class="search-empty">
+        <i class="ti ti-search"></i>
+        <p>Tapez pour rechercher</p>
+        <small>Produits · Mouvements · Demandes · Catégories · Emplacements</small>
+      </div>
+    </div>
+    <div class="search-footer">
+      <div class="search-footer-hint">
+        <span><kbd style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:3px;padding:1px 5px;font-size:9px;font-family:monospace">Ctrl</kbd>+<kbd style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:3px;padding:1px 5px;font-size:9px;font-family:monospace">K</kbd> pour ouvrir</span>
+        <span id="search-result-count" style="color:var(--teal);font-weight:600"></span>
+      </div>
+      <button onclick="closeSearch()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;font-family:var(--font)">✕ Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ APP ═══ -->
+<div class="app" id="app" style="display:none">
+  <div class="sidebar">
+    <div class="logo-area">
+      <img src="data:image/jpeg;base64,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" alt="Connecteo" style="height:32px;border-radius:7px;opacity:.95">
+      <div class="logo-texts">
+        <div class="logo-sub">Gestion Stock</div>
+      </div>
+    </div>
+    <div id="dept-banner"></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidebar-foot">
+      <div class="user-pill">
+        <div class="user-avatar" id="ua">?</div>
+        <div style="min-width:0;flex:1">
+          <div class="user-name" id="un">—</div>
+          <div class="user-role-lbl" id="ur">—</div>
+        </div>
+        <button class="logout-btn" onclick="doLogout()" title="Déconnexion"><i class="ti ti-logout" style="font-size:16px"></i></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- ═══ TOPBAR UNIFIÉ ═══ -->
+    <div class="topbar">
+      <div class="topbar-brand">
+        <div class="topbar-title" id="tt">Dashboard</div>
+        <div class="topbar-sub" id="ts">Connecteo — Gestion des stocks</div>
+      </div>
+
+      <!-- BARRE UNIFIÉE : RECHERCHE + FILTRE DATE -->
+      <div class="topbar-unified" id="topbar-unified">
+        <div class="tub-search" onclick="openSearch()" title="Rechercher (Ctrl+K)">
+          <i class="ti ti-search"></i>
+          <span class="tub-search-label">Rechercher produits, mouvements, demandes…</span>
+          <span class="tub-search-kbd">Ctrl+K</span>
+        </div>
+        <div class="tub-sep"></div>
+        <div class="tub-filter" id="tub-filter-zone">
+          <div class="tub-filter-icon">
+            <i class="ti ti-calendar-event"></i>
+          </div>
+          <div class="tub-filter-group">
+            <span class="tub-filter-label">Du</span>
+            <input type="datetime-local" id="filter-from" title="Date de début">
+          </div>
+          <div class="tub-sep" style="margin:0 2px"></div>
+          <div class="tub-filter-group">
+            <span class="tub-filter-label">Au</span>
+            <input type="datetime-local" id="filter-to" title="Date de fin">
+          </div>
+        </div>
+        <div class="tub-sep"></div>
+        <div class="tub-actions">
+          <button class="tub-btn tub-btn-apply" onclick="applyFilter()" title="Appliquer le filtre de dates">
+            <i class="ti ti-filter" style="font-size:11px"></i> Filtrer
+          </button>
+          <button class="tub-btn tub-btn-clear" onclick="clearFilter()" title="Réinitialiser les dates">
+            <i class="ti ti-x" style="font-size:10px"></i> Tout
+          </button>
+        </div>
+      </div>
+
+      <div class="topbar-right-actions">
+        <div id="filter-active-indicator" style="display:none" title="Filtre de période actif">
+          <div class="tub-filter-active-dot"></div>
+        </div>
+        <div class="realtime-dot" title="Temps réel actif"></div>
+      </div>
+    </div>
+
+    <!-- ACTIVE FILTERS BAR -->
+    <div id="active-filters-bar" style="display:none"></div>
+    <div class="content" id="content">
+      <div class="empty-state"><div class="spinner" style="margin:0 auto"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/stock.js"></script>
+<script src="js/settings.js"></script>
+<script src="js/reports.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
