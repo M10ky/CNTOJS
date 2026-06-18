@@ -394,7 +394,10 @@ function prodTable(prods, dept, color) {
   return `${searchBar}<div class="card">
     <div class="card-hd">
       <span class="card-ttl">${headerInfo}</span>
-      ${canM ? `<div class="btn-row">${btn('+ Produit',color,false,`openAdd('${dept}')`,'ti-plus')}</div>` : ''}
+      <div class="btn-row">
+        ${btn('↓ CSV','#10b981',true,`exportProduitsCSV('${dept}')`,'ti-download')}
+        ${canM ? btn('+ Produit',color,false,`openAdd('${dept}')`,'ti-plus') : ''}
+      </div>
     </div>
     <div style="overflow-x:auto"><table>
       <thead><tr>${hdrs.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
@@ -448,6 +451,7 @@ function renderMvt(dept) {
   return `<p class="page-title">Mouvements ${dept}</p>
     <p class="page-sub">${mvt.length} / ${allMvt.length} mouvement(s) · ↓ ${totE} entrée · ↑ ${totS} sortie</p>
     <div class="btn-row" style="margin-bottom:12px">
+      ${btn('↓ CSV','#10b981',true,`exportMouvementsCSV('${dept}')`,'ti-download')}
       ${btn(`↓ Entrée`,color,false,`openMvt('entree','${dept}',null)`,'ti-arrow-down-circle')}
       ${btn(`↑ Sortie`,'#ef4444',false,`openMvt('sortie','${dept}',null)`,'ti-arrow-up-circle')}
     </div>
@@ -495,7 +499,10 @@ function renderDem(dept) {
   const emptyRow = !dem.length ? `<tr class="no-result-row"><td colspan="12"><div class="nri">🔍</div><div class="nrt">Aucune demande ne correspond</div><div style="font-size:11px;margin-top:4px"><a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">Réinitialiser les filtres</a></div></td></tr>` : '';
   return `<p class="page-title">Demandes ${dept}</p>
     <p class="page-sub">${dem.filter(d=>d.statut==='En attente').length} en attente · ${dem.length} / ${allDem.length} total</p>
-    <div class="btn-row" style="margin-bottom:12px">${btn('+ Nouvelle demande',color,false,`openDemande('${dept}')`,'ti-plus')}</div>
+    <div class="btn-row" style="margin-bottom:12px">
+      ${btn('↓ CSV','#10b981',true,`exportDemandesCSV('${dept}')`,'ti-download')}
+      ${btn('+ Nouvelle demande',color,false,`openDemande('${dept}')`,'ti-plus')}
+    </div>
     ${searchBar}
     <div class="card"><div style="overflow-x:auto"><table>
       <thead><tr>${['ID','Date & Heure','Demandeur','Produit','Qté','Urgence','Destination','Motif','Statut','Mis à jour','Validé par','Actions'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
@@ -521,6 +528,9 @@ function renderAlertes(dept) {
   </tr>`).join('');
   return `<p class="page-title">Alertes ${dept}</p>
     <p class="page-sub">${al.length} produit(s) nécessitant un réapprovisionnement urgent</p>
+    <div class="btn-row" style="margin-bottom:12px">
+      ${btn('↓ CSV','#10b981',true,`exportAlertesCSV('${dept}')`,'ti-download')}
+    </div>
     <div class="card"><div style="overflow-x:auto"><table>
       <thead><tr>${['Priorité','Produit','Catégorie','Emplacement','Stock actuel','Seuil','Statut','Dernière MAJ','Action'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
@@ -559,6 +569,9 @@ function renderHistorique() {
   const emptyRow = !filtered.length ? `<tr class="no-result-row"><td colspan="9"><div class="nri">🔍</div><div class="nrt">Aucun résultat pour "${q}"</div><div style="font-size:11px;margin-top:4px"><a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">Réinitialiser</a></div></td></tr>` : '';
   return `<p class="page-title">Historique Complet</p>
     <p class="page-sub">${filtered.length} / ${allItems.length} opération(s)</p>
+    <div class="btn-row" style="margin-bottom:12px">
+      ${btn('↓ CSV','#10b981',true,'exportHistoriqueCSV()','ti-download')}
+    </div>
     ${searchBar}
     <div class="card"><div style="overflow-x:auto"><table>
       <thead><tr>${['Date & Heure','Dépt','Catégorie','Type/Statut','Produit','Qté','Empl./Dest.','Acteur','Détail'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>

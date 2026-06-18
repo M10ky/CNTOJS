@@ -63,7 +63,10 @@ function renderUtilisateurs() {
     <div class="card" style="margin-bottom:12px;background:#eff6ff;border-color:#bfdbfe"><div style="padding:13px 16px;font-size:12px;color:#1e40af"><i class="ti ti-info-circle" style="vertical-align:middle;margin-right:6px"></i>Pour créer des utilisateurs : <strong>Supabase → Authentication → Users → Invite User</strong>, puis insérer le profil dans <code>profiles</code> avec le même UUID.</div></div>
     ${permMatrix}
     <div class="card">
-      <div class="card-hd"><span class="card-ttl"><i class="ti ti-users" style="color:var(--teal)"></i>Liste des comptes</span></div>
+      <div class="card-hd">
+        <span class="card-ttl"><i class="ti ti-users" style="color:var(--teal)"></i>Liste des comptes</span>
+        <div class="btn-row">${btn('↓ CSV','#10b981',true,'exportUtilisateursCSV()','ti-download')}</div>
+      </div>
       <div style="overflow-x:auto"><table>
         <thead><tr>${['Utilisateur','Rôle','Département','Statut','Créé le','Action'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
         <tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Aucun profil</td></tr>'}</tbody>
