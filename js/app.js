@@ -18,6 +18,7 @@ function buildNav() {
     if (canManIT()) h+=ni('mvt-it','ti-arrows-exchange','Mouvements IT');
     h+=ni('dem-it','ti-clipboard-list','Demandes IT', canManIT()?attenteIT():0);
     if (canManIT()) h+=ni('alertes-it','ti-bell','Alertes IT',alertsIT().length,'#ef4444');
+    if (canManIT()) h+=ni('actifs-it','ti-devices','Actifs IT');   // ← NOUVEAU Étape C
   }
   if (canSeeFin()) {
     h+=`<div class="nav-sec">STOCK FINANCE</div>`;
@@ -25,6 +26,7 @@ function buildNav() {
     if (canManFin()) h+=ni('mvt-fin','ti-arrows-exchange','Mouvements Finance');
     h+=ni('dem-fin','ti-clipboard-list','Demandes Finance', canManFin()?attenteFin():0);
     if (canManFin()) h+=ni('alertes-fin','ti-bell','Alertes Finance',alertsFin().length,'#ef4444');
+    if (canManFin()) h+=ni('actifs-fin','ti-devices','Actifs Finance'); // ← NOUVEAU Étape C
   }
   if (canSeeHist()) {
     h+=`<div class="nav-sec">ANALYSE</div>`;
@@ -59,6 +61,7 @@ function updateTopbar() {
     'alertes-it':'Alertes IT','alertes-fin':'Alertes Finance',
     historique:'Historique Complet', rapports:'Rapports & Statistiques',
     amortissement:'Amortissement Linéaire',
+    'actifs-it':'Actifs Individuels IT','actifs-fin':'Actifs Individuels Finance', // ← NOUVEAU Étape C
     utilisateurs:'Gestion des Utilisateurs', params:'Paramètres Système',
   };
   document.getElementById('tt').textContent=labels[ST.tab]||ST.tab;
@@ -265,6 +268,8 @@ function render() {
   else if (t==='historique')   html=canSeeHist()?renderHistorique()        :accessDenied();
   else if (t==='rapports')     html=canSeeHist()?renderRapports()          :accessDenied();
   else if (t==='amortissement')html=canSeeHist()?renderAmortissement()     :accessDenied();
+  else if (t==='actifs-it')    html=canManIT()  ?renderActifs('IT')        :accessDenied(); // ← NOUVEAU Étape C
+  else if (t==='actifs-fin')   html=canManFin() ?renderActifs('Finance')   :accessDenied(); // ← NOUVEAU Étape C
   else if (t==='utilisateurs') html=renderUtilisateurs();
   else if (t==='params')       html=isAdmin()   ?renderParams()            :accessDenied();
   c.innerHTML=html;

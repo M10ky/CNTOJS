@@ -20,6 +20,7 @@ const ST = {
   produits: [],
   mouvements: [],
   demandes: [],
+  actifs: [], 
   params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [] },
   rtChannels: [],
   search: {

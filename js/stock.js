@@ -4,6 +4,7 @@
 async function loadAllData() {
   await Promise.all([
     loadProduits(), loadMouvements(), loadDemandes(), loadParams(),
+    loadActifs(),                                    // ← NOUVEAU Étape C
     isAdmin() ? loadAllProfiles() : Promise.resolve(),
   ]);
 }
@@ -112,6 +113,11 @@ window.submitMvt = async (typeStr) => {
       ref_document:refDoc, fournisseur,
     });
     if (mErr) throw mErr;
+    // ← NOUVEAU Étape C : génération des fiches individuelles si produit amortissable
+    if (typeStr === 'Entrée' && prod.is_amortissable) {
+      await createActifUnits(prod, qty, mvtId, empl);
+      await loadActifs();
+    }
     closeModal();
     showToast(`${typeStr} enregistrée — ${qty}× ${prod.nom}`);
     await loadProduits(); await loadMouvements(); render();
@@ -136,6 +142,11 @@ window.submitAdd = async () => {
   try {
     const { error } = await db.from('produits').insert({ id, nom, categorie:cat, dept, stock, seuil, prix, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, actif:true });
     if (error) throw error;
+    // ← NOUVEAU Étape C : sauvegarder le flag amortissable si coché
+    const amortChk = document.getElementById('f-amort-chk')?.checked;
+    if (amortChk) {
+      await db.from('produits').update({ is_amortissable: true }).eq('id', id);
+    }
     closeModal(); showToast(`"${nom}" ajouté avec succès`);
     await loadProduits(); render();
   } catch(err) { showToast('Erreur: '+err.message,'err'); }
@@ -296,6 +307,13 @@ function renderModal() {
           <option value="36" selected>36 mois — 3 ans</option><option value="48">48 mois — 4 ans</option>
           <option value="60">60 mois — 5 ans</option><option value="84">84 mois — 7 ans</option>
         </select></div>
+      <div class="amort-toggle-row">
+        <label class="form-lbl" style="cursor:pointer;display:flex;align-items:center;gap:8px;margin:0">
+          <input type="checkbox" id="f-amort-chk" style="width:auto;accent-color:var(--teal);cursor:pointer">
+          <span style="font-size:12px;color:#065f46;font-weight:600">Suivi individuel amortissable</span>
+          <span style="font-size:10px;color:var(--text3);margin-left:2px">— génère une fiche numérotée CNTO-… par unité à chaque entrée</span>
+        </label>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
         ${btn('✓ Créer',color,false,'submitAdd()')}</div>`;
@@ -340,6 +358,16 @@ function renderModal() {
       </div>
       <div class="form-row"><label class="form-lbl">Durée d'amortissement</label>
         <select id="f-edit-duree">${[12,24,36,48,60,84].map(m=>`<option value="${m}" ${(p.duree_amortissement||36)===m?'selected':''}>${m} mois — taux: ${tauxLineaire(m)}%/an</option>`).join('')}</select></div>
+      <div class="amort-toggle-row">
+        <label class="form-lbl" style="cursor:pointer;display:flex;align-items:center;gap:8px;margin:0">
+          <input type="checkbox" id="f-edit-amort-chk"
+                 ${p.is_amortissable ? 'checked' : ''}
+                 onchange="updateAmortissable('${p.id}', this.checked)"
+                 style="width:auto;accent-color:var(--teal);cursor:pointer">
+          <span style="font-size:12px;color:#065f46;font-weight:600">Suivi individuel amortissable</span>
+          <span style="font-size:10px;color:var(--text3);margin-left:2px">— génère une fiche numérotée CNTO-… par unité à chaque entrée</span>
+        </label>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
         ${btn('✓ Enregistrer',color,false,'submitEdit()')}</div>`;
