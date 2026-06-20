@@ -48,8 +48,13 @@ function ni(id, icon, lbl, badge=0, bColor='#f59e0b') {
 }
 
 window.goto = t => {
-  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'' };
-  ST.tab=t; render();
+  // Reset complet des filtres inline
+  ST.search.inline = { 
+    query: '', dept: '', cat: '', statut: '', type: '', 
+    urgence: '', statDem: '', actif: '' 
+  };
+  ST.tab = t; 
+  render();
 };
 
 function updateTopbar() {

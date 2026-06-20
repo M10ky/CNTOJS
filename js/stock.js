@@ -9,8 +9,14 @@ async function loadAllData() {
   ]);
 }
 
+async function loadActifs() {
+  const { data, error } = await db.from('actifs_individuels').select('*').order('created_at', {ascending: false});
+  if (error) { console.error(error); return; }
+  ST.actifs = data || [];
+}
+
 async function loadProduits() {
-  const { data, error } = await db.from('produits').select('*').order('nom');
+  const { data, error } = await db.from('produits').select('*, is_amortissable').order('nom');
   if (error) { console.error(error); return; }
   ST.produits = data||[];
 }
@@ -102,54 +108,99 @@ window.submitMvt = async (typeStr) => {
   const mvtId   = genId(dept==='IT'?'MVT-IT':'MVT-FIN');
   const tsNow   = nowISO();
   try {
-    const updateData = { stock:newStock, updated_at:tsNow };
-    if (typeStr==='Entrée' && empl) updateData.emplacement = empl;
-    const { error:sErr } = await db.from('produits').update(updateData).eq('id',prodId);
+    const updateData = { stock: newStock, updated_at: tsNow };
+    if (typeStr === 'Entrée' && empl) updateData.emplacement = empl;
+
+    const { error: sErr } = await db.from('produits').update(updateData).eq('id', prodId);
     if (sErr) throw sErr;
-    const { error:mErr } = await db.from('mouvements').insert({
-      id:mvtId, date:todayStr(), created_at:tsNow, type:typeStr,
-      produit_id:prodId, produit_nom:prod.nom, qty, valeur:qty*prod.prix, dept,
-      user_name:user, user_id:ST.user?.id, destination:dest, emplacement:empl,
-      ref_document:refDoc, fournisseur,
+
+    const { error: mErr } = await db.from('mouvements').insert({
+      id: mvtId, 
+      date: todayStr(), 
+      created_at: tsNow, 
+      type: typeStr,
+      produit_id: prodId, 
+      produit_nom: prod.nom, 
+      qty, 
+      valeur: qty * prod.prix, 
+      dept,
+      user_name: user, 
+      user_id: ST.user?.id, 
+      destination: dest, 
+      emplacement: empl,
+      ref_document: refDoc, 
+      fournisseur,
     });
     if (mErr) throw mErr;
-    // ← NOUVEAU Étape C : génération des fiches individuelles si produit amortissable
-    if (typeStr === 'Entrée' && prod.is_amortissable) {
+
+    // ═══ ÉTAPE C : Création automatique des actifs individuels ═══
+    if (typeStr === 'Entrée' && prod.is_amortissable === true) {
       await createActifUnits(prod, qty, mvtId, empl);
-      await loadActifs();
+      showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s)`, 'success');
+    } else {
+      showToast(`${typeStr} enregistrée — ${qty}× ${prod.nom}`);
     }
+
     closeModal();
-    showToast(`${typeStr} enregistrée — ${qty}× ${prod.nom}`);
-    await loadProduits(); await loadMouvements(); render();
-  } catch(err) { showToast('Erreur: '+err.message,'err'); }
+    await Promise.all([loadProduits(), loadMouvements(), loadActifs ? loadActifs() : Promise.resolve()]);
+    render();
+  } catch(err) { 
+    showToast('Erreur: '+err.message, 'err'); 
+  }
 };
 
 // ═══ CRUD PRODUITS ═══
 window.submitAdd = async () => {
-  const dept=ST.modal.dept;
-  if (dept==='IT'&&!canManIT()||dept==='Finance'&&!canManFin()) { showToast('Action non autorisée','err'); return; }
-  const nom   = document.getElementById('f-nom')?.value?.trim();
-  const cat   = document.getElementById('f-cat')?.value;
-  const stock = parseInt(document.getElementById('f-stock')?.value)||0;
-  const seuil = parseInt(document.getElementById('f-seuil')?.value)||5;
-  const prix  = parseInt(document.getElementById('f-prix')?.value)||0;
-  const empl  = document.getElementById('f-add-empl')?.value || (ST.params.emplacements[0]||'Stock Principal');
-  const valAch= parseInt(document.getElementById('f-val-achat')?.value)||0;
-  const dtAch = document.getElementById('f-date-achat')?.value || null;
-  const duree = parseInt(document.getElementById('f-duree-amort')?.value)||36;
-  if (!nom||!cat) { showToast('Nom et catégorie requis','err'); return; }
-  const id=genId(dept==='IT'?'IT':'FIN');
+  const dept = ST.modal.dept;
+  if (dept==='IT' && !canManIT() || dept==='Finance' && !canManFin()) { 
+    showToast('Action non autorisée','err'); 
+    return; 
+  }
+
+  const nom    = document.getElementById('f-nom')?.value?.trim();
+  const cat    = document.getElementById('f-cat')?.value;
+  const stock  = parseInt(document.getElementById('f-stock')?.value) || 0;
+  const seuil  = parseInt(document.getElementById('f-seuil')?.value) || 5;
+  const prix   = parseInt(document.getElementById('f-prix')?.value) || 0;
+  const empl   = document.getElementById('f-add-empl')?.value || (ST.params.emplacements[0] || 'Stock Principal');
+  const valAch = parseInt(document.getElementById('f-val-achat')?.value) || 0;
+  const dtAch  = document.getElementById('f-date-achat')?.value || null;
+  const duree  = parseInt(document.getElementById('f-duree-amort')?.value) || 36;
+  const isAmort = document.getElementById('f-amortissable')?.checked || false;   // ← Étape C
+
+  if (!nom || !cat) { 
+    showToast('Nom et catégorie requis','err'); 
+    return; 
+  }
+
+  const id = genId(dept === 'IT' ? 'IT' : 'FIN');
+
   try {
-    const { error } = await db.from('produits').insert({ id, nom, categorie:cat, dept, stock, seuil, prix, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, actif:true });
+    const { error } = await db.from('produits').insert({ 
+      id, 
+      nom, 
+      categorie: cat, 
+      dept, 
+      stock, 
+      seuil, 
+      prix, 
+      emplacement: empl, 
+      valeur_achat: valAch, 
+      date_achat: dtAch, 
+      duree_amortissement: duree,
+      is_amortissable: isAmort,     // ← Étape C
+      actif: true 
+    });
+
     if (error) throw error;
-    // ← NOUVEAU Étape C : sauvegarder le flag amortissable si coché
-    const amortChk = document.getElementById('f-amort-chk')?.checked;
-    if (amortChk) {
-      await db.from('produits').update({ is_amortissable: true }).eq('id', id);
-    }
-    closeModal(); showToast(`"${nom}" ajouté avec succès`);
-    await loadProduits(); render();
-  } catch(err) { showToast('Erreur: '+err.message,'err'); }
+
+    closeModal(); 
+    showToast(`"${nom}" ajouté avec succès${isAmort ? ' (suivi individuel activé)' : ''}`);
+    await loadProduits(); 
+    render();
+  } catch(err) { 
+    showToast('Erreur: '+err.message,'err'); 
+  }
 };
 
 window.submitEdit = async () => {
