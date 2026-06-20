@@ -1,5 +1,3 @@
-'use strict';
-
 // ═══ SUPABASE CONFIG ═══
 const SUPABASE_URL      = 'https://jpwfifxdtezrxituzvpz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_B0jB6AR899HIRGLBbUS3LQ_XkJ8kx0k';
@@ -35,6 +33,7 @@ const ST = {
       type: '',
       urgence: '',
       statDem: '',
+      actif: '',        // ← ÉTAPE B : '' = tous | 'true' = actifs seul. | 'false' = inactifs seul.
     }
   },
   searchDebounce: null,
@@ -101,10 +100,13 @@ const canSeeHist  = () => isAdmin();
 const canDemIT    = () => canSeeIT();
 const canDemFin   = () => canSeeFin();
 
-const alertsIT   = () => ST.produits.filter(p => p.dept==='IT'      && (p.stock<=p.seuil||p.stock===0));
-const alertsFin  = () => ST.produits.filter(p => p.dept==='Finance' && (p.stock<=p.seuil||p.stock===0));
+const alertsIT   = () => ST.produits.filter(p => p.dept==='IT'      && p.actif!==false && (p.stock<=p.seuil||p.stock===0));
+const alertsFin  = () => ST.produits.filter(p => p.dept==='Finance' && p.actif!==false && (p.stock<=p.seuil||p.stock===0));
 const attenteIT  = () => ST.demandes.filter(d => d.dept==='IT'      && d.statut==='En attente').length;
 const attenteFin = () => ST.demandes.filter(d => d.dept==='Finance' && d.statut==='En attente').length;
+
+// ← ÉTAPE B : isActif() — null/undefined traité comme actif (rétrocompatibilité)
+const isActif = p => p.actif !== false;
 
 const getStatus = p => p.stock===0 ? 'Rupture' : p.stock<=p.seuil ? 'Critique' : 'Disponible';
 
@@ -113,6 +115,11 @@ const statusTag = s => s==='Rupture'
   : s==='Critique'
   ? `<span class="tag" style="color:#d97706;background:#fffbeb">▲ Critique</span>`
   : `<span class="tag" style="color:#16a34a;background:#f0fdf4">✓ Dispo</span>`;
+
+// ← ÉTAPE B : badge actif/inactif
+const actifBadge = p => isActif(p)
+  ? `<span class="tag" style="color:#16a34a;background:#dcfce7;font-size:9.5px">✓ Actif</span>`
+  : `<span class="tag" style="color:#94a3b8;background:#f1f5f9;font-size:9.5px">✕ Inactif</span>`;
 
 const typeBadge = t => t==='Entrée'
   ? `<span class="tag" style="color:#166534;background:#dcfce7">↓ Entrée</span>`
@@ -185,7 +192,7 @@ function escQ(s) { return String(s||'').replace(/'/g,"\\'").replace(/"/g,''); }
 // ═══ INLINE SEARCH HELPERS ═══
 window.setInlineQuery = (q) => { ST.search.inline.query = q; render(); };
 window.resetInlineFilters = () => {
-  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'' };
+  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'', actif:'' };
   renderActiveFiltersBar(); render();
 };
 window.toggleInlineFilter = (key, val) => {
@@ -197,7 +204,7 @@ window.setInlineFilterQuery = (q) => { ST.search.inline.query = q; renderActiveF
 
 function hasActiveFilters() {
   const il = ST.search.inline;
-  return !!(il.query || il.dept || il.cat || il.statut || il.type || il.urgence || il.statDem);
+  return !!(il.query || il.dept || il.cat || il.statut || il.type || il.urgence || il.statDem || il.actif);
 }
 
 function renderActiveFiltersBar() {
@@ -213,6 +220,7 @@ function renderActiveFiltersBar() {
   if (il.type)    chips.push({label:`Type: ${il.type}`, key:'type'});
   if (il.urgence) chips.push({label:`Urgence: ${il.urgence}`, key:'urgence'});
   if (il.statDem) chips.push({label:`Statut: ${il.statDem}`, key:'statDem'});
+  if (il.actif)   chips.push({label:il.actif==='true'?'Actifs seulement':'Inactifs seulement', key:'actif'});
   bar.innerHTML = `
     <span class="af-label"><i class="ti ti-filter" style="font-size:11px;vertical-align:middle"></i> Filtres actifs :</span>
     ${chips.map(c=>`<span class="af-chip" onclick="clearOneFilter('${c.key}')" title="Supprimer ce filtre">${c.label} <span class="af-x">×</span></span>`).join('')}
@@ -228,6 +236,7 @@ function buildContentSearchBar(opts = {}) {
     showDept = false, showCat = false, cats = [],
     showStatut = false, showType = false,
     showUrgence = false, showStatDem = false,
+    showActif = false,   // ← ÉTAPE B
     placeholder = 'Rechercher…', count = 0, filteredCount = 0,
   } = opts;
   const pill = (label, key, val, cls='') => {
@@ -235,12 +244,14 @@ function buildContentSearchBar(opts = {}) {
     return `<span class="csb-pill${active?' on'+cls:''}" onclick="toggleInlineFilter('${key}','${val}')">${label}</span>`;
   };
   let filtersHtml = '';
-  if (showDept) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Dépt</span>${pill('IT','dept','IT','-it')}${pill('Finance','dept','Finance','-fin')}`;
+  if (showDept)   filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Dépt</span>${pill('IT','dept','IT','-it')}${pill('Finance','dept','Finance','-fin')}`;
   if (showCat && cats.length) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Catég.</span>${cats.map(c=>pill(c,'cat',c)).join('')}`;
   if (showStatut) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Stock</span>${pill('Dispo','statut','Disponible','-ok')}${pill('Critique','statut','Critique','-amber')}${pill('Rupture','statut','Rupture','-red')}`;
-  if (showType) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Type</span>${pill('↓ Entrée','type','Entrée','-ok')}${pill('↑ Sortie','type','Sortie','-red')}`;
+  if (showType)   filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Type</span>${pill('↓ Entrée','type','Entrée','-ok')}${pill('↑ Sortie','type','Sortie','-red')}`;
   if (showUrgence) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Urgence</span>${pill('Normale','urgence','Normale','-ok')}${pill('Urgente','urgence','Urgente','-amber')}${pill('Critique','urgence','Critique','-red')}`;
   if (showStatDem) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Statut</span>${pill('En attente','statDem','En attente','-amber')}${pill('Validé','statDem','Validé','-ok')}${pill('Refusé','statDem','Refusé','-red')}`;
+  // ← ÉTAPE B : filtre actif/inactif
+  if (showActif)  filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">État</span>${pill('Actifs','actif','true','-ok')}${pill('Inactifs','actif','false','-red')}`;
   const showCount = `<span class="csb-count">${filteredCount} / ${count} résultat${filteredCount!==1?'s':''}</span>`;
   const resetBtn = hasActiveFilters() ? `<button class="csb-reset" onclick="resetInlineFilters()"><i class="ti ti-x" style="font-size:11px"></i> Réinitialiser</button>` : '';
   return `<div class="content-search-bar">
@@ -265,6 +276,9 @@ function applyInlineFilters(items, type = 'produit') {
       if (il.dept && item.dept !== il.dept) return false;
       if (il.cat && item.categorie !== il.cat) return false;
       if (il.statut && getStatus(item) !== il.statut) return false;
+      // ← ÉTAPE B : filtre actif
+      if (il.actif === 'true'  && item.actif === false) return false;
+      if (il.actif === 'false' && item.actif !== false) return false;
     } else if (type === 'mouvement') {
       if (q && !matchesQuery([item.produit_nom, item.user_name, item.destination, item.fournisseur, item.ref_document, item.id, item.emplacement], q)) return false;
       if (il.dept && item.dept !== il.dept) return false;

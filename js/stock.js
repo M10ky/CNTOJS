@@ -50,6 +50,31 @@ async function loadAllProfiles() {
   ST.allProfiles = data||[];
 }
 
+// ═══ ÉTAPE B : TOGGLE ACTIF/INACTIF ═══
+window.toggleProductActif = async (id, currentlyActif) => {
+  const p = ST.produits.find(x => x.id === id);
+  if (!p) return;
+  if (p.dept==='IT'&&!canManIT() || p.dept==='Finance'&&!canManFin()) {
+    showToast('Action non autorisée','err'); return;
+  }
+  const newState = !currentlyActif;
+  showConfirm(
+    newState ? `Réactiver "${p.nom}" ?` : `Désactiver "${p.nom}" ?`,
+    newState
+      ? 'Le produit redeviendra disponible pour les mouvements, demandes et alertes.'
+      : 'Les mouvements et demandes seront bloqués. Le produit restera visible (grisé) dans l\'inventaire.',
+    async () => {
+      try {
+        const { error } = await db.from('produits').update({ actif: newState, updated_at: nowISO() }).eq('id', id);
+        if (error) throw error;
+        showToast(newState ? `"${p.nom}" réactivé` : `"${p.nom}" désactivé`);
+        await loadProduits(); render();
+      } catch(err) { showToast('Erreur: ' + err.message, 'err'); }
+    },
+    newState ? '#10b981' : '#f59e0b'
+  );
+};
+
 // ═══ CRUD MOUVEMENTS ═══
 window.submitMvt = async (typeStr) => {
   const dept=ST.modal.dept;
@@ -66,6 +91,10 @@ window.submitMvt = async (typeStr) => {
   if (qty<=0)  { showToast('Quantité invalide','err'); return; }
   const prod = ST.produits.find(p=>p.id===prodId);
   if (!prod) { showToast('Produit introuvable','err'); return; }
+  // ← ÉTAPE B : blocage si inactif
+  if (!isActif(prod)) {
+    showToast(`"${prod.nom}" est désactivé — réactivez-le d'abord`, 'err'); return;
+  }
   if (typeStr==='Sortie'&&prod.stock<qty) { showToast(`Stock insuffisant (${prod.stock} disponible)`,'err'); return; }
   if (typeStr==='Sortie'&&!dest) { showToast('Veuillez indiquer la destination','err'); return; }
   const newStock = typeStr==='Entrée' ? prod.stock+qty : prod.stock-qty;
@@ -105,7 +134,7 @@ window.submitAdd = async () => {
   if (!nom||!cat) { showToast('Nom et catégorie requis','err'); return; }
   const id=genId(dept==='IT'?'IT':'FIN');
   try {
-    const { error } = await db.from('produits').insert({ id, nom, categorie:cat, dept, stock, seuil, prix, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree });
+    const { error } = await db.from('produits').insert({ id, nom, categorie:cat, dept, stock, seuil, prix, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, actif:true });
     if (error) throw error;
     closeModal(); showToast(`"${nom}" ajouté avec succès`);
     await loadProduits(); render();
@@ -177,6 +206,10 @@ window.validDem = async (dept, id, action) => {
     await loadProduits();
     const prod = ST.produits.find(p => p.nom.trim().toLowerCase()===dem.produit.trim().toLowerCase() && p.dept===dept);
     if (!prod) { showToast(`Produit "${dem.produit}" introuvable dans l'inventaire ${dept}`,'err'); return; }
+    // ← ÉTAPE B : blocage validation si produit inactif
+    if (!isActif(prod)) {
+      showToast(`"${prod.nom}" est désactivé — réactivez-le avant de valider cette demande`,'err'); return;
+    }
     if (prod.stock < dem.qty) { showToast(`Stock insuffisant : ${prod.stock} disponible, ${dem.qty} demandé`,'err'); return; }
     try {
       const tsNow=nowISO();
@@ -201,7 +234,8 @@ function renderModal() {
   if (!ST.modal) return;
   const { type, dept } = ST.modal;
   const color    = dept==='IT'?'#4f46e5':'#10b981';
-  const prods    = ST.produits.filter(p=>p.dept===dept);
+  // ← ÉTAPE B : exclure les produits inactifs des sélecteurs dans les modales
+  const prods    = ST.produits.filter(p=>p.dept===dept && isActif(p));
   const cats     = dept==='IT'?ST.params.categoriesIT:ST.params.categoriesFin;
   const destOpts = ST.params.destinations.map(d=>`<option value="${d}">${d}</option>`).join('');
   const emplOpts = (ST.params.emplacements.length>0?ST.params.emplacements:['Stock Principal']).map(e=>`<option value="${e}">${e}</option>`).join('');
@@ -219,7 +253,7 @@ function renderModal() {
         <div class="form-row"><label class="form-lbl">Type d'opération</label><input value="${iE?'Entrée':'Sortie'}" disabled class="field-readonly" style="font-weight:700;color:${iE?'#16a34a':'#dc2626'}"></div>
       </div>
       <div class="form-row"><label class="form-lbl">Produit <span class="req">*</span></label>
-        <select id="f-prod"><option value="">— Sélectionner un produit ${dept} —</option>${prodOpts}</select></div>
+        <select id="f-prod"><option value="">— Sélectionner un produit ${dept} actif —</option>${prodOpts}</select></div>
       <div class="form-3col">
         <div class="form-row"><label class="form-lbl">Quantité <span class="req">*</span></label><input id="f-qty" type="number" min="1" value="1"></div>
         <div class="form-row"><label class="form-lbl">Prix unit. (MGA)</label><input id="f-prix-unit" type="number" min="0" placeholder="Auto" readonly class="field-readonly"></div>
@@ -267,7 +301,8 @@ function renderModal() {
         ${btn('✓ Créer',color,false,'submitAdd()')}</div>`;
   } else if (type==='dem') {
     title=`📋 Nouvelle Demande — ${dept}`;
-    const deptProds=ST.produits.filter(p=>p.dept===dept);
+    // ← ÉTAPE B : seulement les produits actifs dans le datalist
+    const deptProds=ST.produits.filter(p=>p.dept===dept && isActif(p));
     body=`
       <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Département</label><input value="${dept}" disabled class="field-readonly" style="font-weight:700;color:${color}"></div>
@@ -343,6 +378,7 @@ function prodTable(prods, dept, color) {
 
   const searchBar = buildContentSearchBar({
     showCat: true, cats, showStatut: true,
+    showActif: true,   // ← ÉTAPE B
     placeholder: `Rechercher dans l'inventaire ${dept}…`,
     count: prods.length, filteredCount: allFiltered.length,
   });
@@ -352,34 +388,51 @@ function prodTable(prods, dept, color) {
   hdrs.push('Statut');
   if (canM) hdrs.push('Actions');
 
-  const rows=allFiltered.map(p=>{
-    const st=getStatus(p);
-    const sc=st==='Rupture'?'#dc2626':st==='Critique'?'#d97706':'var(--text)';
-    const vnc=calcVNC(p);
-    const pct=amortPct(p);
-    const vncCell=vnc!==null
-      ? `<div style="font-weight:700;font-size:12px">${fmt(vnc)} MGA</div><div class="amort-bar"><div class="amort-fill" style="width:${pct}%;background:${amortColor(pct)}"></div></div><div style="font-size:9px;color:${amortColor(pct)};margin-top:1px">${pct}% amorti</div>`
-      : '<span style="color:var(--text3);font-size:11px">Non configuré</span>';
-    let html=`<tr>
-      <td><code style="font-size:9px">${highlight(p.id,q)}</code></td>
-      <td style="font-weight:600;font-size:12.5px">${highlight(p.nom,q)}</td>
-      <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(p.categorie,q)}</span></td>
-      <td>${p.emplacement?`<span class="tag" style="color:#1e40af;background:#dbeafe;font-size:9.5px">${highlight(p.emplacement,q)}</span>`:'<span style="color:var(--text3)">—</span>'}</td>
-      <td><span class="stock-num" style="color:${sc}">${p.stock}</span></td>
-      <td style="color:var(--text3)">${p.seuil}</td>`;
-    if (showP) html+=`<td style="color:var(--text2)">${fmt(p.prix)} MGA</td><td style="font-weight:700">${fmt(p.stock*p.prix)} MGA</td><td>${vncCell}</td>`;
-    html+=`<td>${statusTag(st)}</td>`;
-    if (canM) {
-      html+=`<td><div style="display:flex;gap:3px;flex-wrap:wrap">
-        ${btn('+','var(--teal)',true,`openMvt('entree','${dept}','${p.id}')`,'ti-plus')}
-        ${btn('−','#ef4444',true,`openMvt('sortie','${dept}','${p.id}')`,'ti-minus')}
-        ${btn('✏','#64748b',true,`openEditProduct('${p.id}')`)}
-        ${isAdmin()?btn('🗑','#dc2626',true,`deleteProduct('${p.id}','${dept}','${p.nom.replace(/'/g,"\\'")}')`):''}
-      </div></td>`;
-    }
-    html+=`</tr>`;
-    return html;
-  }).join('');
+const rows = allFiltered.map(p => {
+  const pActif = isActif(p);
+  const st = getStatus(p);
+  const sc = st === 'Rupture' ? '#dc2626' : st === 'Critique' ? '#d97706' : 'var(--text)';
+  const vnc = calcVNC(p);
+  const pct = amortPct(p);
+  const vncCell = vnc !== null 
+    ? `<div style="font-weight:700;font-size:12px">${fmt(vnc)} MGA</div><div class="amort-bar"><div class="amort-fill" style="width:${pct}%;background:${amortColor(pct)}"></div></div><div style="font-size:9px;color:${amortColor(pct)};margin-top:1px">${pct}% amorti</div>`
+    : '<span style="color:var(--text3);font-size:11px">Non configuré</span>';
+
+  let html = `<tr${pActif ? '' : ' class="row-inactif"'}>
+    <td><code style="font-size:9px">${highlight(p.id, q)}</code></td>
+    <td style="font-weight:600;font-size:12.5px">${highlight(p.nom, q)}${!pActif ? '<br><span style="font-size:9.5px;color:#94a3b8">Produit inactif</span>' : ''}</td>
+    <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(p.categorie, q)}</span></td>
+    <td>${p.emplacement ? `<span class="tag" style="color:#1e40af;background:#dbeafe;font-size:9.5px">${highlight(p.emplacement, q)}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
+    <td><span class="stock-num" style="color:${sc}">${p.stock}</span></td>
+    <td style="color:var(--text3)">${p.seuil}</td>`;
+
+  if (showP) {
+    html += `<td style="color:var(--text2)">${fmt(p.prix)} MGA</td>
+             <td style="font-weight:700">${fmt(p.stock * p.prix)} MGA</td>
+             <td>${vncCell}</td>`;
+  }
+
+  // === COLONNE STATUT + ACTIF (corrigée) ===
+  html += `<td style="min-width:120px">
+    ${pActif ? statusTag(st) : '<span style="color:#94a3b8;font-size:11px">—</span>'}
+    <br>${actifBadge(p)}
+  </td>`;
+
+  if (canM) {
+    html += `<td><div style="display:flex;gap:4px;flex-wrap:wrap">
+      ${pActif ? btn('+','var(--teal)',true,`openMvt('entree','${dept}','${p.id}')`,'ti-plus') : ''}
+      ${pActif ? btn('−','#ef4444',true,`openMvt('sortie','${dept}','${p.id}')`,'ti-minus') : ''}
+      ${btn('✏','#64748b',true,`openEditProduct('${p.id}')`)}
+      <button class="actif-toggle ${pActif ? 'on' : 'off'}" onclick="toggleProductActif('${p.id}',${pActif})" title="${pActif ? 'Désactiver' : 'Réactiver'} ce produit">
+        ${pActif ? '● Actif' : '○ Inactif'}
+      </button>
+      ${isAdmin() ? btn('🗑','#dc2626',true,`deleteProduct('${p.id}','${dept}','${p.nom.replace(/'/g,"\\'")}')`) : ''}
+    </div></td>`;
+  }
+
+  html += `</tr>`;
+  return html;
+}).join('');
 
   const emptyRow = !allFiltered.length ? `<tr class="no-result-row"><td colspan="${hdrs.length}">
     <div class="nri">🔍</div>
@@ -387,9 +440,12 @@ function prodTable(prods, dept, color) {
     <div style="font-size:11px;margin-top:4px">Essayez un autre terme ou <a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">réinitialisez les filtres</a></div>
   </td></tr>` : '';
 
+  // ← ÉTAPE B : compteurs actifs/inactifs dans le résumé
+  const nbActif   = prods.filter(p=>isActif(p)).length;
+  const nbInactif = prods.length - nbActif;
   const headerInfo = showP
-    ? `${allFiltered.length} référence(s) · Valeur: ${fmt(allFiltered.reduce((s,p)=>s+p.stock*p.prix,0))} MGA`
-    : `${allFiltered.length} référence(s)`;
+    ? `${allFiltered.length} référence(s) · Valeur: ${fmt(allFiltered.filter(p=>isActif(p)).reduce((s,p)=>s+p.stock*p.prix,0))} MGA${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`
+    : `${allFiltered.length} référence(s)${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`;
 
   return `${searchBar}<div class="card">
     <div class="card-hd">
@@ -407,17 +463,25 @@ function prodTable(prods, dept, color) {
 
 // ═══ RENDER PAGES STOCK ═══
 function renderStockIT() {
-  const v=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+p.stock*p.prix,0);
+  const allIT = ST.produits.filter(p => p.dept === 'IT');
+  const v = allIT.filter(p => isActif(p)).reduce((s, p) => s + p.stock * p.prix, 0);
+  const totalRefs = allIT.length;
+  const inactifs = allIT.filter(p => !isActif(p)).length;
+
   return `<p class="page-title">Inventaire IT</p>
-    <p class="page-sub">${canSeePrix()?`Valeur totale: ${fmt(v)} MGA · `:''}${ST.produits.filter(p=>p.dept==='IT').length} références</p>
-    ${prodTable(ST.produits.filter(p=>p.dept==='IT'),'IT','#4f46e5')}`;
+    <p class="page-sub">${canSeePrix() ? `Valeur totale (actifs) : ${fmt(v)} MGA · ` : ''}${totalRefs} référence${totalRefs>1?'s':''}${inactifs ? ` <span style="color:#94a3b8">(${inactifs} inactif${inactifs>1?'s':''})</span>` : ''}</p>
+    ${prodTable(allIT, 'IT', '#4f46e5')}`;
 }
 
 function renderStockFin() {
-  const v=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+p.stock*p.prix,0);
+  const allFin = ST.produits.filter(p => p.dept === 'Finance');
+  const v = allFin.filter(p => isActif(p)).reduce((s, p) => s + p.stock * p.prix, 0);
+  const totalRefs = allFin.length;
+  const inactifs = allFin.filter(p => !isActif(p)).length;
+
   return `<p class="page-title">Inventaire Finance</p>
-    <p class="page-sub">${canSeePrix()?`Valeur totale: ${fmt(v)} MGA · `:''}${ST.produits.filter(p=>p.dept==='Finance').length} références</p>
-    ${prodTable(ST.produits.filter(p=>p.dept==='Finance'),'Finance','#10b981')}`;
+    <p class="page-sub">${canSeePrix() ? `Valeur totale (actifs) : ${fmt(v)} MGA · ` : ''}${totalRefs} référence${totalRefs>1?'s':''}${inactifs ? ` <span style="color:#94a3b8">(${inactifs} inactif${inactifs>1?'s':''})</span>` : ''}</p>
+    ${prodTable(allFin, 'Finance', '#10b981')}`;
 }
 
 function renderMvt(dept) {
@@ -475,17 +539,22 @@ function renderDem(dept) {
     count: allDem.length, filteredCount: dem.length,
   });
   const rows=dem.map(d=>{
+    // ← ÉTAPE B : vérifier si le produit est inactif pour alerter le manager
+    const prodRef = ST.produits.find(p=>p.nom.trim().toLowerCase()===d.produit.trim().toLowerCase()&&p.dept===dept);
+    const prodInactif = prodRef && !isActif(prodRef);
     const acts=d.statut==='En attente'&&canM
-      ? `<div style="display:flex;gap:4px">
-          ${btn('✓ Valider','#10b981',false,`validDem('${dept}','${d.id}','Validé')`)}
-          ${btn('✕','#ef4444',true,`validDem('${dept}','${d.id}','Refusé')`)}
-        </div>`
+      ? prodInactif
+        ? `<span class="readonly-badge" style="color:#f59e0b;border-color:#fcd34d" title="Produit désactivé — réactivez-le d'abord"><i class="ti ti-alert-triangle"></i> Produit inactif</span>`
+        : `<div style="display:flex;gap:4px">
+            ${btn('✓ Valider','#10b981',false,`validDem('${dept}','${d.id}','Validé')`)}
+            ${btn('✕','#ef4444',true,`validDem('${dept}','${d.id}','Refusé')`)}
+          </div>`
       : (d.statut==='En attente'?`<span class="readonly-badge"><i class="ti ti-clock"></i> En cours</span>`:'');
-    return `<tr>
+    return `<tr${prodInactif&&d.statut==='En attente'?' style="background:#fffbeb"':''}>
       <td><code style="font-size:9px">${highlight(d.id,q)}</code></td>
       <td>${fmtDTSplit(d.created_at||d.date)}</td>
       <td style="font-weight:500;font-size:12.5px">${highlight(d.demandeur,q)}</td>
-      <td style="font-weight:500">${highlight(d.produit,q)}</td>
+      <td style="font-weight:500">${highlight(d.produit,q)}${prodInactif?'<br><span style="font-size:9px;color:#f59e0b">produit inactif</span>':''}</td>
       <td style="font-weight:700">${d.qty}</td>
       <td>${urgBadge(d.urgence)}</td>
       <td style="font-size:11px;color:var(--text2)">${highlight(d.dest||'—',q)}</td>
@@ -511,10 +580,11 @@ function renderDem(dept) {
 }
 
 function renderAlertes(dept) {
+  // ← ÉTAPE B : alertsIT/alertsFin filtrent déjà les inactifs (cf. utils.js)
   const al=(dept==='IT'?alertsIT():alertsFin()).sort((a,b)=>a.stock-b.stock);
   const color=dept==='IT'?'#4f46e5':'#10b981';
   if (!al.length) return `<p class="page-title">Alertes ${dept}</p>
-    <div class="card"><div class="empty-state"><div class="empty-ico">✅</div><div style="font-size:14px;font-weight:700;color:var(--text)">Aucune alerte active</div><div style="margin-top:4px;font-size:12px">Tous les stocks sont au-dessus de leurs seuils critiques</div></div></div>`;
+    <div class="card"><div class="empty-state"><div class="empty-ico">✅</div><div style="font-size:14px;font-weight:700;color:var(--text)">Aucune alerte active</div><div style="margin-top:4px;font-size:12px">Tous les stocks actifs sont au-dessus de leurs seuils critiques</div></div></div>`;
   const rows=al.map(p=>`<tr>
     <td><span style="font-size:18px">${p.stock===0?'🔴':'🟠'}</span></td>
     <td><div style="font-weight:600">${p.nom}</div></td>
@@ -527,7 +597,7 @@ function renderAlertes(dept) {
     <td>${btn('Réapprovisionner',color,false,`openMvt('entree','${dept}','${p.id}')`,'ti-package')}</td>
   </tr>`).join('');
   return `<p class="page-title">Alertes ${dept}</p>
-    <p class="page-sub">${al.length} produit(s) nécessitant un réapprovisionnement urgent</p>
+    <p class="page-sub">${al.length} produit(s) actif(s) nécessitant un réapprovisionnement urgent</p>
     <div class="btn-row" style="margin-bottom:12px">
       ${btn('↓ CSV','#10b981',true,`exportAlertesCSV('${dept}')`,'ti-download')}
     </div>
