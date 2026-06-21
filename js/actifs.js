@@ -28,20 +28,19 @@ function getCatAbbr(categorie) {
   return first.padEnd(3, 'X').slice(0, 3);
 }
 
-// ─── Numéro de série (Format final) ─────────────────────────────
-// CNTO-{DEPT}-{PRODUIT_ID_COMPLET}-{YY}-{SEQ4}
-// Exemple : CNTO-IT-IT-MQMETGM4-26-0001
-function generateNomenclature(dept, produitId, year, seq) {
-  const deptCode = dept === 'IT' ? 'IT' : 'FIN';
-  const yy = String(year).slice(-2);                    // 2026 → 26
+// ─── Numéro de série ─────────────────────────────────────
+// Format : CNTO-{PRODUIT_ID_COMPLET}-{YY}-{SEQ4}
+// Exemple : CNTO-IT-MQMETGM4-26-0001
+function generateNomenclature(produitId, year, seq) {
+  const yy = String(year).slice(-2);   // 2026 → 26
 
-  // Nettoyage léger du produit_id (remplace les espaces et caractères spéciaux par -)
-  let cleanProdId = String(produitId || 'GEN')
+  // Nettoyage du produit_id
+  let cleanId = String(produitId || 'GEN')
     .trim()
-    .replace(/[^A-Z0-9-]/gi, '')      // garde lettres, chiffres et -
-    .replace(/-+/g, '-');             // évite les doubles --
+    .replace(/[^A-Z0-9-]/gi, '')      // Garde seulement lettres, chiffres et -
+    .replace(/-+/g, '-');             // Évite les doubles tirets
 
-  return `CNTO-${deptCode}-${cleanProdId}-${yy}-${String(seq).padStart(4, '0')}`;
+  return `CNTO-${cleanId}-${yy}-${String(seq).padStart(4, '0')}`;
 }
 
 // ─── Création automatique d'actifs à l'entrée de stock ────────
@@ -76,7 +75,7 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
     for (let i = 0; i < qty; i++) {
       const seq = lastSeq + i + 1;
       actifs.push({
-        id:                  generateNomenclature(prod.dept, prod.id, year, seq),
+        id:                  generateNomenclature(prod.id, year, seq),
         produit_id:          prod.id,
         produit_nom:         prod.nom,
         categorie:           prod.categorie            || '',
