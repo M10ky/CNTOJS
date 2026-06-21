@@ -4,16 +4,18 @@
 async function loadAllData() {
   await Promise.all([
     loadProduits(), loadMouvements(), loadDemandes(), loadParams(),
-    loadActifs(),                                    // ← NOUVEAU Étape C
+    loadActifs(),                                    // ← définie dans actifs.js (source unique, cf. FIX ci-dessous)
     isAdmin() ? loadAllProfiles() : Promise.resolve(),
   ]);
 }
 
-async function loadActifs() {
-  const { data, error } = await db.from('actifs_individuels').select('*').order('created_at', {ascending: false});
-  if (error) { console.error(error); return; }
-  ST.actifs = data || [];
-}
+// FIX : la fonction loadActifs() était définie EN DOUBLE (ici et dans actifs.js),
+// avec la même requête fautive `.order('created_at', ...)` sur une colonne qui
+// n'existe pas sur actifs_individuels. La définition de actifs.js (chargée après
+// ce fichier) écrasait silencieusement celle-ci au runtime — la duplication ne
+// changeait donc rien fonctionnellement, mais entretenait la confusion et le bug.
+// Elle est retirée d'ici ; loadActifs() vit désormais uniquement dans actifs.js,
+// avec un tri corrigé sur 'date_entree'.
 
 async function loadProduits() {
   const { data, error } = await db.from('produits').select('*, is_amortissable').order('nom');
@@ -134,15 +136,23 @@ window.submitMvt = async (typeStr) => {
     if (mErr) throw mErr;
 
     // ═══ ÉTAPE C : Création automatique des actifs individuels ═══
+    // FIX : createActifUnits() renvoie maintenant explicitement true/false.
+    // On n'affiche le toast "actifs créés" QUE si l'insertion a réellement
+    // réussi — auparavant ce toast s'affichait inconditionnellement, masquant
+    // l'éventuel échec (et son message d'erreur) déjà affiché par createActifUnits().
     if (typeStr === 'Entrée' && prod.is_amortissable === true) {
-      await createActifUnits(prod, qty, mvtId, empl);
-      showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s)`, 'success');
+      const actifsOk = await createActifUnits(prod, qty, mvtId, empl);
+      if (actifsOk) {
+        showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s)`);
+      } else {
+        showToast(`Entrée enregistrée, mais la création des actifs individuels a échoué`, 'err');
+      }
     } else {
       showToast(`${typeStr} enregistrée — ${qty}× ${prod.nom}`);
     }
 
     closeModal();
-    await Promise.all([loadProduits(), loadMouvements(), loadActifs ? loadActifs() : Promise.resolve()]);
+    await Promise.all([loadProduits(), loadMouvements(), loadActifs()]);
     render();
   } catch(err) { 
     showToast('Erreur: '+err.message, 'err'); 
@@ -166,7 +176,7 @@ window.submitAdd = async () => {
   const valAch = parseInt(document.getElementById('f-val-achat')?.value) || 0;
   const dtAch  = document.getElementById('f-date-achat')?.value || null;
   const duree  = parseInt(document.getElementById('f-duree-amort')?.value) || 36;
-  const isAmort = document.getElementById('f-amortissable')?.checked || false;   // ← Étape C
+  const isAmort = document.getElementById('f-amort-chk')?.checked || false;   // ← FIX : l'id réel du checkbox dans le formulaire est 'f-amort-chk' (cf. renderModal/type==='add'), pas 'f-amortissable'. Avec l'ancien id, getElementById() renvoyait toujours null → isAmort était TOUJOURS false, quel que soit l'état coché par l'utilisateur.
 
   if (!nom || !cat) { 
     showToast('Nom et catégorie requis','err'); 

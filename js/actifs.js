@@ -10,7 +10,7 @@ async function loadActifs() {
   const { data, error } = await db
     .from('actifs_individuels')
     .select('*')
-    .order('created_at', { ascending: false });
+    .order('date_entree', { ascending: false }); // ← FIX : 'created_at' n'existe pas sur cette table, on trie sur 'date_entree'
   if (error) { console.error('[loadActifs]', error); return; }
   ST.actifs = data || [];
 }
@@ -35,6 +35,9 @@ function generateNomenclature(dept, categorie, year, seq) {
 }
 
 // ─── Création automatique d'actifs à l'entrée de stock ────────
+// FIX : la fonction renvoie désormais explicitement true/false pour que
+// l'appelant (submitMvt) sache si la création a réellement réussi, au lieu
+// d'afficher un toast de succès même quand l'insertion a échoué.
 window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
   try {
     // Lire le dernier numéro de séquence pour ce produit
@@ -67,8 +70,11 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
         statut:              'En service',
         mouvement_entree_id: mvtId,
         observation:         '',
-        created_at:          now,
-        updated_at:          now,
+        // FIX : 'created_at' / 'updated_at' supprimés — ces colonnes n'existent
+        // pas dans le schéma réel de actifs_individuels (cf. liste de colonnes
+        // confirmée). Leur présence ici faisait échouer systématiquement
+        // l'INSERT (erreur PostgREST « colonne inconnue »), erreur qui était
+        // ensuite avalée par le catch ci-dessous sans jamais remonter à l'appelant.
       });
     }
 
@@ -87,9 +93,11 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
     showToast(
       `${qty} actif${qty > 1 ? 's' : ''} créé${qty > 1 ? 's' : ''} — ${first}${qty > 1 ? ' → ' + last : ''}`
     );
+    return true; // ← FIX : succès explicite
   } catch (err) {
     console.error('[createActifUnits]', err);
     showToast('Erreur création actifs : ' + err.message, 'err');
+    return false; // ← FIX : échec explicite, remonté à submitMvt()
   }
 };
 
@@ -113,7 +121,7 @@ window.horsServiceActif = async (id) => {
   try {
     const { error } = await db
       .from('actifs_individuels')
-      .update({ statut: 'Hors service', updated_at: nowISO() })
+      .update({ statut: 'Hors service' }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" mis hors service`);
@@ -127,7 +135,7 @@ window.reactiverActif = async (id) => {
   try {
     const { error } = await db
       .from('actifs_individuels')
-      .update({ statut: 'En service', updated_at: nowISO() })
+      .update({ statut: 'En service' }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" réactivé en service`);
@@ -145,7 +153,7 @@ window.reformerActif = async (id) => {
       try {
         const { error } = await db
           .from('actifs_individuels')
-          .update({ statut: 'Réformé', updated_at: nowISO() })
+          .update({ statut: 'Réformé' }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
           .eq('id', id);
         if (error) throw error;
         showToast(`"${id}" réformé`);
