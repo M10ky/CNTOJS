@@ -28,10 +28,14 @@ function getCatAbbr(categorie) {
   return first.padEnd(3, 'X').slice(0, 3);
 }
 
-function generateNomenclature(dept, categorie, year, seq) {
+function generateNomenclature(dept, categorie, produitId, year, seq) {
   const deptCode = dept === 'IT' ? 'IT' : 'FIN';
   const catAbbr  = getCatAbbr(categorie);
-  return `CNTO-${deptCode}-${catAbbr}-${year}-${String(seq).padStart(4, '0')}`;
+  
+  // On prend les 3-4 premiers caractères du produit_id (ex: IT-ABC123 → ABC)
+  const prodShort = String(produitId || '').replace(/[^A-Z0-9]/gi, '').slice(0, 4).padEnd(3, 'X');
+  
+  return `CNTO-${deptCode}-${catAbbr}-${prodShort}-${year}-${String(seq).padStart(4, '0')}`;
 }
 
 // ─── Création automatique d'actifs à l'entrée de stock ────────
@@ -66,7 +70,7 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
     for (let i = 0; i < qty; i++) {
       const seq = lastSeq + i + 1;
       actifs.push({
-        id:                  generateNomenclature(prod.dept, prod.categorie, year, seq),
+        id:                  generateNomenclature(prod.dept, prod.categorie, prod.id, year, seq),
         produit_id:          prod.id,
         produit_nom:         prod.nom,
         categorie:           prod.categorie            || '',
@@ -251,13 +255,13 @@ function renderActifs(dept) {
 
   // Barre de recherche (texte libre uniquement — filtres par statut à l'Étape E)
   const searchBar = buildContentSearchBar({
-    placeholder: `Rechercher dans les actifs ${dept} (nomenclature, produit, emplacement, statut…)`,
+    placeholder: `Rechercher dans les actifs ${dept} (numéro de série, produit, emplacement, statut…)`,
     count: all.length,
     filteredCount: filtered.length,
   });
 
   // En-têtes dynamiques selon droits
-  const hdrs = ['Nomenclature', 'Produit', 'Catégorie', 'Emplacement', 'Date entrée'];
+  const hdrs = ['Numéro de série', 'Produit', 'Catégorie', 'Emplacement', 'Date entrée'];
   if (canSeePrix()) hdrs.push('Valeur achat');
   hdrs.push('Durée');
   if (canSeePrix()) hdrs.push('VNC · Avanc.');
@@ -341,7 +345,7 @@ window.exportActifsCSV = (dept) => {
   const showP = canSeePrix();
 
   const headers = [
-    'Nomenclature', 'Produit', 'Catégorie', 'Emplacement',
+    'Numéro de série', 'Produit', 'Catégorie', 'Emplacement',
     'Statut', 'Date entrée', 'Mouvement entrée',
   ];
   if (showP) headers.push('Valeur achat (MGA)', 'Date achat', 'Durée amort. (mois)', 'VNC (MGA)', '% Amorti');
