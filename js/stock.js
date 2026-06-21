@@ -136,16 +136,15 @@ window.submitMvt = async (typeStr) => {
     if (mErr) throw mErr;
 
     // ═══ ÉTAPE C : Création automatique des actifs individuels ═══
-    // FIX : createActifUnits() renvoie maintenant explicitement true/false.
-    // On n'affiche le toast "actifs créés" QUE si l'insertion a réellement
-    // réussi — auparavant ce toast s'affichait inconditionnellement, masquant
-    // l'éventuel échec (et son message d'erreur) déjà affiché par createActifUnits().
+    // FIX : createActifUnits() renvoie { ok, first, last } ou { ok:false, message }.
+    // Un seul toast est affiché ici, avec le message d'erreur Supabase réel en
+    // cas d'échec — fini les toasts qui s'écrasaient et masquaient la vraie cause.
     if (typeStr === 'Entrée' && prod.is_amortissable === true) {
-      const actifsOk = await createActifUnits(prod, qty, mvtId, empl);
-      if (actifsOk) {
-        showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s)`);
+      const res = await createActifUnits(prod, qty, mvtId, empl);
+      if (res.ok) {
+        showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s) — ${res.first}${qty>1?' → '+res.last:''}`);
       } else {
-        showToast(`Entrée enregistrée, mais la création des actifs individuels a échoué`, 'err');
+        showToast(`Entrée enregistrée, mais échec création actifs : ${res.message}`, 'err');
       }
     } else {
       showToast(`${typeStr} enregistrée — ${qty}× ${prod.nom}`);

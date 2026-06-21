@@ -35,20 +35,29 @@ function generateNomenclature(dept, categorie, year, seq) {
 }
 
 // ─── Création automatique d'actifs à l'entrée de stock ────────
-// FIX : la fonction renvoie désormais explicitement true/false pour que
-// l'appelant (submitMvt) sache si la création a réellement réussi, au lieu
-// d'afficher un toast de succès même quand l'insertion a échoué.
+// FIX : la fonction renvoie désormais { ok, message, ids } pour que l'appelant
+// (submitMvt) sache si la création a réellement réussi ET puisse afficher
+// le message d'erreur Supabase réel dans un seul toast — au lieu d'un toast
+// de succès factice, ou de deux toasts qui s'écrasaient l'un l'autre.
 window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
   try {
+    // Préfixe de nomenclature pour ce produit (dept + catégorie) — réutilisé
+    // pour la colonne 'prefix' de serial_sequences ET pour générer chaque ID.
+    const deptCode = prod.dept === 'IT' ? 'IT' : 'FIN';
+    const catAbbr  = getCatAbbr(prod.categorie);
+    const nomPrefix = `CNTO-${deptCode}-${catAbbr}`;
+
     // Lire le dernier numéro de séquence pour ce produit
+    // FIX : la colonne réelle s'appelle 'current_seq', pas 'last_seq'
+    // (confirmé via information_schema.columns sur serial_sequences).
     let lastSeq = 0;
     const { data: seqRow, error: seqRErr } = await db
       .from('serial_sequences')
-      .select('last_seq')
+      .select('current_seq')
       .eq('produit_id', prod.id)
       .maybeSingle();
     if (seqRErr) throw seqRErr;
-    if (seqRow) lastSeq = seqRow.last_seq || 0;
+    if (seqRow) lastSeq = seqRow.current_seq || 0;
 
     const year = new Date().getFullYear();
     const now  = nowISO();
@@ -82,22 +91,23 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
     if (insErr) throw insErr;
 
     // Mettre à jour (ou créer) le compteur de séquence
+    // FIX : 'last_seq' → 'current_seq' (vrai nom de colonne), et ajout de
+    // 'prefix' qui existe sur la table et n'était jusqu'ici jamais alimenté.
     const { error: seqWErr } = await db.from('serial_sequences').upsert(
-      { produit_id: prod.id, last_seq: lastSeq + qty, updated_at: now },
+      { produit_id: prod.id, current_seq: lastSeq + qty, prefix: nomPrefix, updated_at: now },
       { onConflict: 'produit_id' }
     );
     if (seqWErr) throw seqWErr;
 
     const first = actifs[0].id;
     const last  = actifs[actifs.length - 1].id;
-    showToast(
-      `${qty} actif${qty > 1 ? 's' : ''} créé${qty > 1 ? 's' : ''} — ${first}${qty > 1 ? ' → ' + last : ''}`
-    );
-    return true; // ← FIX : succès explicite
+    return { ok: true, first, last }; // ← FIX : succès explicite — c'est submitMvt() qui affiche le toast
   } catch (err) {
+    // FIX : plus de showToast() ici. Un seul toast (affiché par submitMvt)
+    // avec le VRAI message Supabase, au lieu de deux toasts qui s'écrasaient
+    // l'un l'autre (l'utilisateur ne voyait jamais le détail de l'erreur).
     console.error('[createActifUnits]', err);
-    showToast('Erreur création actifs : ' + err.message, 'err');
-    return false; // ← FIX : échec explicite, remonté à submitMvt()
+    return { ok: false, message: err?.message || err?.error_description || String(err) };
   }
 };
 
