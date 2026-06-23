@@ -342,7 +342,6 @@ window.submitPret = async () => {
       id,
       actif_id:              actifId,
       produit_nom:           actif.produit_nom    || '',
-      categorie:             actif.categorie      || '',
       dept,
       emprunteur,
       emprunteur_id:         emprunteur_id_val,
