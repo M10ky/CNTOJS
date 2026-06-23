@@ -115,6 +115,9 @@ function renderAmortissement() {
       <div><strong>Méthode linéaire :</strong> L'actif perd une valeur égale chaque année. Taux annuel = 100% / Durée en années.</div>
     </div>
     <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s}</div></div>`).join('')}</div>
+        <div class="btn-row" style="margin-bottom:12px">
+      ${btn('↓ CSV Amortissement', '#10b981', true, 'exportAmortissementCSV()', 'ti-download')}
+    </div>
     ${avecAmort.length?`
     <div class="charts-grid">
       <div class="chart-card"><div class="chart-ttl">VNC vs Valeur initiale — Top 8 actifs</div><div class="bar-chart-wrap"><canvas id="chart-amort"></canvas></div></div>

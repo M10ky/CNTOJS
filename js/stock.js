@@ -4,8 +4,10 @@
 async function loadAllData() {
   await Promise.all([
     loadProduits(), loadMouvements(), loadDemandes(), loadParams(),
-    loadActifs(),                                    // ← définie dans actifs.js (source unique, cf. FIX ci-dessous)
-    isAdmin() ? loadAllProfiles() : Promise.resolve(),
+    loadActifs(),    // ← actifs.js
+    loadPrets(),     // ← Étape D : prets.js
+    // allProfiles nécessaire pour les managers (sélecteur emprunteur dans modal prêt)
+    (isAdmin() || isSupportIT() || isResFin()) ? loadAllProfiles() : Promise.resolve(),
   ]);
 }
 

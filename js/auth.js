@@ -130,7 +130,8 @@ function setupRealtime() {
     .on('postgres_changes',{event:'*',schema:'public',table:'mouvements'}, async()=>{ await loadMouvements(); render(); })
     .on('postgres_changes',{event:'*',schema:'public',table:'demandes'},   async()=>{ await loadDemandes();   render(); })
     .on('postgres_changes',{event:'*',schema:'public',table:'parametres'},        async()=>{ await loadParams();  render(); })
-    .on('postgres_changes',{event:'*',schema:'public',table:'actifs_individuels'},async()=>{ await loadActifs(); render(); }) // ← NOUVEAU Étape C
+    .on('postgres_changes',{event:'*',schema:'public',table:'actifs_individuels'},async()=>{ await loadActifs(); render(); }) // ← Étape C
+    .on('postgres_changes',{event:'*',schema:'public',table:'prets'},             async()=>{ await loadPrets();  render(); }) // ← Étape E
     .subscribe(status=>{ if(status==='SUBSCRIBED') console.log('[RT] Connecté'); });
   ST.rtChannels=[ch];
 }

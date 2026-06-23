@@ -20,7 +20,8 @@ const ST = {
   produits: [],
   mouvements: [],
   demandes: [],
-  actifs: [], 
+  actifs: [],
+  prets:  [],          // ← Étape D
   params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [] },
   rtChannels: [],
   search: {

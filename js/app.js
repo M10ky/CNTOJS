@@ -18,7 +18,8 @@ function buildNav() {
     if (canManIT()) h+=ni('mvt-it','ti-arrows-exchange','Mouvements IT');
     h+=ni('dem-it','ti-clipboard-list','Demandes IT', canManIT()?attenteIT():0);
     if (canManIT()) h+=ni('alertes-it','ti-bell','Alertes IT',alertsIT().length,'#ef4444');
-    if (canManIT()) h+=ni('actifs-it','ti-devices','Actifs IT');   // ← NOUVEAU Étape C
+    if (canManIT()) h+=ni('actifs-it','ti-devices','Actifs IT');   // ← Étape C
+    if (canManIT()) h+=ni('prets-it','ti-transfer','Prêts IT');    // ← Étape D
   }
   if (canSeeFin()) {
     h+=`<div class="nav-sec">STOCK FINANCE</div>`;
@@ -26,9 +27,10 @@ function buildNav() {
     if (canManFin()) h+=ni('mvt-fin','ti-arrows-exchange','Mouvements Finance');
     h+=ni('dem-fin','ti-clipboard-list','Demandes Finance', canManFin()?attenteFin():0);
     if (canManFin()) h+=ni('alertes-fin','ti-bell','Alertes Finance',alertsFin().length,'#ef4444');
-    if (canManFin()) h+=ni('actifs-fin','ti-devices','Actifs Finance'); // ← NOUVEAU Étape C
+    if (canManFin()) h+=ni('actifs-fin','ti-devices','Actifs Finance');  // ← Étape C
+    if (canManFin()) h+=ni('prets-fin','ti-transfer','Prêts Finance');   // ← Étape D
   }
-  if (canSeeHist()) {
+  if (canSeeHist()) { 
     h+=`<div class="nav-sec">ANALYSE</div>`;
     h+=ni('historique','ti-history','Historique');
     h+=ni('rapports','ti-chart-bar','Rapports');
@@ -66,7 +68,8 @@ function updateTopbar() {
     'alertes-it':'Alertes IT','alertes-fin':'Alertes Finance',
     historique:'Historique Complet', rapports:'Rapports & Statistiques',
     amortissement:'Amortissement Linéaire',
-    'actifs-it':'Actifs Individuels IT','actifs-fin':'Actifs Individuels Finance', // ← NOUVEAU Étape C
+    'actifs-it':'Actifs Individuels IT','actifs-fin':'Actifs Individuels Finance', // ← Étape C
+    'prets-it':'Gestion des Prêts IT','prets-fin':'Gestion des Prêts Finance',     // ← Étape D
     utilisateurs:'Gestion des Utilisateurs', params:'Paramètres Système',
   };
   document.getElementById('tt').textContent=labels[ST.tab]||ST.tab;
@@ -248,6 +251,76 @@ function runSearch(query) {
       if (dems.length > 6) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${dems.length-6} autre(s)</div>`;
     }
   }
+  // ─── Section Actifs individuels ──────────────────────────────
+  if (f==='all' || f==='actifs' || f==='it' || f==='fin') {
+    const actifsList = (ST.actifs||[]).filter(a => {
+      if (f==='it'  && a.dept!=='IT')      return false;
+      if (f==='fin' && a.dept!=='Finance') return false;
+      if (a.dept==='IT'      && !canManIT())  return false;
+      if (a.dept==='Finance' && !canManFin()) return false;
+      return matchesQuery([a.id, a.produit_nom, a.categorie, a.emplacement, a.statut], q);
+    });
+    if (actifsList.length) {
+      totalCount += actifsList.length;
+      html += `<div class="search-section-header"><i class="ti ti-devices" style="color:#6366f1"></i>Actifs individuels <span class="count-badge">${actifsList.length}</span></div>`;
+      html += actifsList.slice(0,6).map(a => {
+        const dc  = a.dept==='IT'?'#4f46e5':'#10b981';
+        const dbg = a.dept==='IT'?'#eef2ff':'#f0fdf4';
+        const stColors = {
+          'En service':  { c:'#16a34a', bg:'#dcfce7' },
+          'En prêt':     { c:'#1d4ed8', bg:'#dbeafe' },
+          'Hors service':{ c:'#d97706', bg:'#fef3c7' },
+          'Réformé':     { c:'#94a3b8', bg:'#f1f5f9' },
+        };
+        const { c:sc='#64748b', bg:sbg='#f1f5f9' } = stColors[a.statut] || {};
+        const tab = a.dept==='IT'?'actifs-it':'actifs-fin';
+        return `<div class="search-result-item" onclick="closeSearch();goto('${tab}');setTimeout(()=>setInlineQuery('${escQ(a.id)}'),200)">
+          <div class="sri-icon" style="background:${dbg}"><i class="ti ti-devices" style="color:${dc}"></i></div>
+          <div class="sri-main">
+            <div class="sri-title"><code style="font-size:11px;font-family:var(--mono);color:var(--teal-d)">${highlight(a.id,q)}</code></div>
+            <div class="sri-sub">${highlight(a.produit_nom||'—',q)} · ${highlight(a.categorie||'',q)} · ${a.emplacement||'—'}</div>
+          </div>
+          <div class="sri-meta"><div class="sri-badge" style="color:${sc};background:${sbg}">${a.statut}</div></div>
+        </div>`;
+      }).join('');
+      if (actifsList.length>6) html+=`<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${actifsList.length-6} autre(s)</div>`;
+    }
+  }
+  // ─── Section Prêts ─────────────────────────────────────────
+  if (f==='all' || f==='prets' || f==='it' || f==='fin') {
+    const pretsList = (ST.prets||[]).filter(p => {
+      if (f==='it'  && p.dept!=='IT')      return false;
+      if (f==='fin' && p.dept!=='Finance') return false;
+      if (p.dept==='IT'      && !canManIT())  return false;
+      if (p.dept==='Finance' && !canManFin()) return false;
+      return matchesQuery([p.actif_id, p.emprunteur, p.produit_nom, p.statut, p.motif, p.id], q);
+    });
+    if (pretsList.length) {
+      totalCount += pretsList.length;
+      html += `<div class="search-section-header"><i class="ti ti-transfer" style="color:#f59e0b"></i>Prêts <span class="count-badge">${pretsList.length}</span></div>`;
+      html += pretsList.slice(0,6).map(p => {
+        const stColors = {
+          'En cours':  { c:'#1d4ed8', bg:'#dbeafe' },
+          'En retard': { c:'#dc2626', bg:'#fee2e2' },
+          'Retourné':  { c:'#16a34a', bg:'#dcfce7' },
+        };
+        const { c:sc='#64748b', bg:sbg='#f1f5f9' } = stColors[p.statut] || {};
+        const tab = p.dept==='IT'?'prets-it':'prets-fin';
+        return `<div class="search-result-item" onclick="closeSearch();goto('${tab}');setTimeout(()=>setInlineQuery('${escQ(p.actif_id||'')}'),200)">
+          <div class="sri-icon" style="background:${sbg}"><i class="ti ti-transfer" style="color:${sc}"></i></div>
+          <div class="sri-main">
+            <div class="sri-title">
+              <code style="font-size:11px;font-family:var(--mono);color:var(--teal-d)">${highlight(p.actif_id||'—',q)}</code>
+              <span style="font-size:11.5px;margin-left:6px">— ${highlight(p.produit_nom||'—',q)}</span>
+            </div>
+            <div class="sri-sub">${highlight(p.emprunteur||'—',q)} · retour prévu ${p.date_retour_prevue?fmtDate(p.date_retour_prevue):'—'}</div>
+          </div>
+          <div class="sri-meta"><div class="sri-badge" style="color:${sc};background:${sbg}">${p.statut}</div></div>
+        </div>`;
+      }).join('');
+      if (pretsList.length>6) html+=`<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${pretsList.length-6} autre(s)</div>`;
+    }
+  }
   if (!html) {
     html = `<div class="search-empty"><i class="ti ti-search-off"></i><p>Aucun résultat pour "${q}"</p><small>Essayez un terme différent ou changez le filtre</small></div>`;
   }
@@ -273,8 +346,10 @@ function render() {
   else if (t==='historique')   html=canSeeHist()?renderHistorique()        :accessDenied();
   else if (t==='rapports')     html=canSeeHist()?renderRapports()          :accessDenied();
   else if (t==='amortissement')html=canSeeHist()?renderAmortissement()     :accessDenied();
-  else if (t==='actifs-it')    html=canManIT()  ?renderActifs('IT')        :accessDenied(); // ← NOUVEAU Étape C
-  else if (t==='actifs-fin')   html=canManFin() ?renderActifs('Finance')   :accessDenied(); // ← NOUVEAU Étape C
+  else if (t==='actifs-it')    html=canManIT()  ?renderActifs('IT')        :accessDenied(); // ← Étape C
+  else if (t==='actifs-fin')   html=canManFin() ?renderActifs('Finance')   :accessDenied(); // ← Étape C
+  else if (t==='prets-it')     html=canManIT()  ?renderPrets('IT')         :accessDenied(); // ← Étape D
+  else if (t==='prets-fin')    html=canManFin() ?renderPrets('Finance')    :accessDenied(); // ← Étape D
   else if (t==='utilisateurs') html=renderUtilisateurs();
   else if (t==='params')       html=isAdmin()   ?renderParams()            :accessDenied();
   c.innerHTML=html;

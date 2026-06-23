@@ -516,3 +516,8 @@ tr.row-inactif td {
   border: 1.5px solid #bbf7d0;
   border-radius: 9px;
 }
+
+/* ─── ÉTAPE D : PRÊTS ─── */
+.pret-encours  { color: #1d4ed8; background: #dbeafe; }
+.pret-retard   { color: #dc2626; background: #fee2e2; }
+.pret-retourne { color: #16a34a; background: #dcfce7; }
