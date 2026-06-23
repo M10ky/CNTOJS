@@ -521,3 +521,4 @@ tr.row-inactif td {
 .pret-encours  { color: #1d4ed8; background: #dbeafe; }
 .pret-retard   { color: #dc2626; background: #fee2e2; }
 .pret-retourne { color: #16a34a; background: #dcfce7; }
+.pret-perdu    { color: #7c3aed; background: #ede9fe; }

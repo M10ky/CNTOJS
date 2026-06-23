@@ -1,13 +1,13 @@
 'use strict';
 
 // ═══════════════════════════════════════════════════════════════
-//   PRÊTS — MODULE COMPLET (schéma v2 aligné)
+//   PRÊTS — MODULE COMPLET (schéma v2 + corrections statuts)
 //   Colonnes réelles prets : id, actif_id(uuid/null), produit_id(text),
 //   produit_nom, dept, emprunteur, emprunteur_id, date_debut, date_retour_prevue,
 //   date_retour_reelle, statut, motif, valideur, valideur_id, notes,
 //   created_at, updated_at
-//   → produit_id stocke la nomenclature actif (CNTO-…) car actif_id est UUID
-//   → notes stocke la destination (pas de colonne dédiée dans le schéma)
+//   → produit_id stocke la nomenclature actif (CNTO-…)
+//   → notes stocke la destination
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Chargement depuis Supabase ───────────────────────────────
@@ -18,26 +18,33 @@ async function loadPrets() {
     .order('created_at', { ascending: false });
   if (error) { console.error('[loadPrets]', error); return; }
   const now = new Date();
-  ST.prets = (data || []).map(p => ({
-    ...p,
+  ST.prets = (data || []).map(p => {
     // Enrichissement mémoire : "En cours" + date dépassée → "En retard"
-    statut: (p.statut === 'En cours' && p.date_retour_prevue && new Date(p.date_retour_prevue) < now)
-      ? 'En retard'
-      : p.statut,
-  }));
+    // NOTE : on ne ré-écrase PAS "Retourné" ni "Perdu" — statuts terminaux
+    if (
+      p.statut === STATUS_PRET.EN_COURS &&
+      p.date_retour_prevue &&
+      new Date(p.date_retour_prevue) < now
+    ) {
+      return { ...p, statut: STATUS_PRET.EN_RETARD };
+    }
+    return p;
+  });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
 function joursRestants(pret) {
-  if (!pret.date_retour_prevue || pret.statut === 'Retourné') return null;
+  if (!pret.date_retour_prevue) return null;
+  if (pret.statut === STATUS_PRET.RETOURNE || pret.statut === STATUS_PRET.PERDU) return null;
   const diff = new Date(pret.date_retour_prevue) - new Date();
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
 function pretStatutBadge(statut) {
-  if (statut === 'En cours')   return `<span class="tag pret-encours">⇄ En cours</span>`;
-  if (statut === 'En retard')  return `<span class="tag pret-retard">⚠ En retard</span>`;
-  if (statut === 'Retourné')   return `<span class="tag pret-retourne">✓ Retourné</span>`;
+  if (statut === STATUS_PRET.EN_COURS)   return `<span class="tag pret-encours">⇄ En cours</span>`;
+  if (statut === STATUS_PRET.EN_RETARD)  return `<span class="tag pret-retard">⚠ En retard</span>`;
+  if (statut === STATUS_PRET.RETOURNE)   return `<span class="tag pret-retourne">✓ Retourné</span>`;
+  if (statut === STATUS_PRET.PERDU)      return `<span class="tag pret-perdu">✕ Perdu</span>`;
   return `<span class="tag">${statut || '—'}</span>`;
 }
 
@@ -51,13 +58,14 @@ function renderPrets(dept) {
   const q       = (il.query || '').trim();
 
   const all       = (ST.prets || []).filter(p => p.dept === dept);
-  const enCours   = all.filter(p => p.statut === 'En cours');
-  const enRetard  = all.filter(p => p.statut === 'En retard');
-  const retournes = all.filter(p => p.statut === 'Retourné');
+  const enCours   = all.filter(p => p.statut === STATUS_PRET.EN_COURS);
+  const enRetard  = all.filter(p => p.statut === STATUS_PRET.EN_RETARD);
+  const retournes = all.filter(p => p.statut === STATUS_PRET.RETOURNE);
+  const perdus    = all.filter(p => p.statut === STATUS_PRET.PERDU);
 
-  // produit_id = nomenclature actif (CNTO-…)
   const filtered = all.filter(a => {
     if (!q) return true;
+    // CORRECTION BUG : utiliser produit_id (nomenclature CNTO) car actif_id est uuid/null
     return matchesQuery(
       [a.produit_id, a.emprunteur, a.produit_nom, a.motif, a.notes, a.statut, a.id],
       q
@@ -68,13 +76,21 @@ function renderPrets(dept) {
     { lbl: 'En cours',  val: enCours.length,   s: 'prêts actifs',         c: '#3b82f6' },
     { lbl: 'En retard', val: enRetard.length,   s: 'dépassement échéance', c: '#ef4444' },
     { lbl: 'Retournés', val: retournes.length,  s: 'sur la période',       c: '#10b981' },
-    { lbl: 'Total',     val: all.length,         s: 'enregistrements',      c: '#64748b' },
+    { lbl: 'Perdus',    val: perdus.length,      s: 'actifs définitivement perdus', c: '#7c3aed' },
+    { lbl: 'Total',     val: all.length,          s: 'enregistrements',     c: '#64748b' },
   ];
 
   const alertBanner = enRetard.length > 0
     ? `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
         <i class="ti ti-alert-triangle" style="color:#dc2626"></i>
         <div><strong>${enRetard.length} actif(s) en retard de restitution.</strong> Contactez les emprunteurs concernés.</div>
+      </div>`
+    : '';
+
+  const perduBanner = perdus.length > 0
+    ? `<div class="info-banner" style="background:#f5f3ff;border-color:#c4b5fd;color:#6d28d9">
+        <i class="ti ti-alert-octagon" style="color:#7c3aed"></i>
+        <div><strong>${perdus.length} actif(s) déclaré(s) perdu(s).</strong> Ces actifs ont été réformés automatiquement.</div>
       </div>`
     : '';
 
@@ -93,7 +109,7 @@ function renderPrets(dept) {
   const rows = filtered.map(p => {
     const jours = joursRestants(p);
     let delaiCell = '<span style="color:var(--text3)">—</span>';
-    if (p.statut !== 'Retourné' && jours !== null) {
+    if (jours !== null) {
       const c2  = jours < 0 ? '#dc2626' : jours <= 2 ? '#d97706' : '#16a34a';
       const lbl = jours < 0
         ? `${Math.abs(jours)}j de retard`
@@ -101,13 +117,20 @@ function renderPrets(dept) {
       delaiCell = `<span style="color:${c2};font-weight:700;font-size:11px">${lbl}</span>`;
     }
 
-    const actionCell = p.statut !== 'Retourné'
-      ? btn('↩ Retour', '#10b981', true, `retournerPret('${p.id}')`)
-      : '<span style="font-size:11px;color:var(--text3)">—</span>';
+    // Actions disponibles selon statut et transitions autorisées
+    let actionCell = '<span style="font-size:11px;color:var(--text3)">—</span>';
+    if (isValidTransition(TRANSITIONS_PRET, p.statut, STATUS_PRET.RETOURNE)) {
+      actionCell = `<div style="display:flex;gap:4px;flex-wrap:wrap">
+        ${btn('↩ Retour', '#10b981', true, `retournerPret('${p.id}')`)}
+        ${btn('✕ Perdu',  '#7c3aed', true, `perdreActif('${p.id}')`)}
+      </div>`;
+    }
 
-    const rowStyle = p.statut === 'En retard'
+    const rowStyle = p.statut === STATUS_PRET.EN_RETARD
       ? ' style="background:#fff5f5"'
-      : p.statut === 'Retourné' ? ' class="row-inactif"' : '';
+      : p.statut === STATUS_PRET.PERDU
+        ? ' style="background:#f5f3ff"'
+        : (p.statut === STATUS_PRET.RETOURNE ? ' class="row-inactif"' : '');
 
     return `<tr${rowStyle}>
       <td><code style="font-size:9px">${highlight(p.id, q)}</code></td>
@@ -141,8 +164,10 @@ function renderPrets(dept) {
   return `<p class="page-title">Gestion des Prêts — ${dept}</p>
     <p class="page-sub">${enCours.length} prêt(s) en cours${enRetard.length
       ? ` · <span style="color:#dc2626;font-weight:700">${enRetard.length} en retard</span>`
+      : ''}${perdus.length
+      ? ` · <span style="color:#7c3aed;font-weight:700">${perdus.length} perdu(s)</span>`
       : ''} · ${all.length} total</p>
-    ${alertBanner}
+    ${alertBanner}${perduBanner}
     <div class="kpi-grid">${kpis.map(k =>
       `<div class="kpi" style="border-left-color:${k.c}">
         <div class="kpi-lbl">${k.lbl}</div>
@@ -183,9 +208,11 @@ function renderModalPret() {
   const color    = dept === 'IT' ? '#4f46e5' : '#10b981';
   const destOpts = ST.params.destinations.map(d => `<option value="${d}">${d}</option>`).join('');
 
-  // Actifs disponibles : statut "En service" uniquement
-  const actifsDispos = (ST.actifs || []).filter(a => a.dept === dept && a.statut === 'En service');
-  const actifOpts    = actifsDispos.map(a =>
+  // Actifs disponibles : statut STATUS_ACTIF.EN_SERVICE uniquement
+  const actifsDispos = (ST.actifs || []).filter(
+    a => a.dept === dept && a.statut === STATUS_ACTIF.EN_SERVICE
+  );
+  const actifOpts = actifsDispos.map(a =>
     `<option value="${a.id}" data-nom="${escQ(a.produit_nom || '')}">${a.id} — ${a.produit_nom || '—'} (${a.emplacement || '—'})</option>`
   ).join('');
 
@@ -312,8 +339,10 @@ window.submitPret = async () => {
 
   const actif = (ST.actifs || []).find(a => a.id === actifId);
   if (!actif) { showToast('Actif introuvable', 'err'); return; }
-  if (actif.statut !== 'En service') {
-    showToast(`"${actifId}" n'est plus disponible (statut : ${actif.statut})`, 'err'); return;
+
+  // VALIDATION : vérification de transition valide
+  if (!isValidTransition(TRANSITIONS_ACTIF, actif.statut, STATUS_ACTIF.EN_PRET)) {
+    showToast(`"${actifId}" ne peut pas être prêté (statut actuel : ${actif.statut})`, 'err'); return;
   }
 
   const emprunteurProfile = ST.allProfiles.find(u => u.name === emprunteur);
@@ -323,22 +352,19 @@ window.submitPret = async () => {
   const tsNow = nowISO();
 
   try {
-    // 1. Créer le prêt — colonnes alignées sur le schéma réel
-    // produit_id (text) = nomenclature actif (CNTO-…)
-    // notes = destination (pas de colonne dédiée dans la table)
-    // date_debut / date_retour_prevue = type date → todayStr() / valeur form YYYY-MM-DD
+    // 1. Créer le prêt
     const { error: pErr } = await db.from('prets').insert({
       id,
-      produit_id:            actifId,          // ← nomenclature CNTO-… (text)
+      produit_id:            actifId,           // ← nomenclature CNTO-… (text)
       produit_nom:           actif.produit_nom || '',
       dept,
       emprunteur,
       emprunteur_id:         emprunteur_id_val,
-      date_debut:            todayStr(),        // ← type date, pas timestamp
-      date_retour_prevue:    dateRetourPrev,    // ← YYYY-MM-DD depuis le form
-      statut:                'En cours',
+      date_debut:            todayStr(),
+      date_retour_prevue:    dateRetourPrev,
+      statut:                STATUS_PRET.EN_COURS,
       motif,
-      notes:                 dest || '',        // ← destination stockée dans notes
+      notes:                 dest || '',        // ← destination dans notes
       valideur:              ST.profile?.name  || '',
       valideur_id:           ST.user?.id       || null,
       created_at:            tsNow,
@@ -346,11 +372,10 @@ window.submitPret = async () => {
     });
     if (pErr) throw pErr;
 
-    // 2. Passer l'actif en "En prêt"
-    // Pas de updated_at sur actifs_individuels (colonne inexistante)
+    // 2. Passer l'actif en STATUS_ACTIF.EN_PRET
     const { error: aErr } = await db
       .from('actifs_individuels')
-      .update({ statut: 'En prêt' })
+      .update({ statut: STATUS_ACTIF.EN_PRET })
       .eq('id', actifId);
     if (aErr) throw aErr;
 
@@ -372,8 +397,10 @@ window.retournerPret = async (id) => {
   if (dept === 'IT' && !canManIT() || dept === 'Finance' && !canManFin()) {
     showToast('Action non autorisée', 'err'); return;
   }
-  if (pret.statut === 'Retourné') {
-    showToast('Ce prêt est déjà clôturé', 'err'); return;
+
+  // VALIDATION : vérification de transition valide
+  if (!isValidTransition(TRANSITIONS_PRET, pret.statut, STATUS_PRET.RETOURNE)) {
+    showToast(`Ce prêt ne peut pas être clôturé (statut : ${pret.statut})`, 'err'); return;
   }
 
   showConfirm(
@@ -385,19 +412,18 @@ window.retournerPret = async (id) => {
         const tsNow = nowISO();
 
         // 1. Clôturer le prêt
-        // date_retour_reelle = type date → todayStr()
         const { error: pErr } = await db.from('prets').update({
-          statut:              'Retourné',
-          date_retour_reelle:  todayStr(),  // ← type date
+          statut:              STATUS_PRET.RETOURNE,
+          date_retour_reelle:  todayStr(),
           updated_at:          tsNow,
         }).eq('id', id);
         if (pErr) throw pErr;
 
-        // 2. Remettre l'actif en service via produit_id (nomenclature CNTO-…)
+        // 2. Remettre l'actif en service
         const { error: aErr } = await db
           .from('actifs_individuels')
-          .update({ statut: 'En service' })
-          .eq('id', pret.produit_id);       // ← produit_id = nomenclature actif
+          .update({ statut: STATUS_ACTIF.EN_SERVICE })
+          .eq('id', pret.produit_id);  // ← produit_id = nomenclature CNTO-…
         if (aErr) throw aErr;
 
         showToast(`"${pret.produit_id}" retourné — remis en service`);
@@ -408,6 +434,57 @@ window.retournerPret = async (id) => {
       }
     },
     '#10b981'
+  );
+};
+
+// ─── Perte d'un actif prêté ────────────────────────────────────
+// NOUVEAU : gère le cas d'un actif déclaré perdu.
+// Workflow : pret.statut → 'Perdu', actif.statut → 'Réformé'
+window.perdreActif = async (id) => {
+  const pret = (ST.prets || []).find(p => p.id === id);
+  if (!pret) return;
+
+  const { dept } = pret;
+  if (dept === 'IT' && !canManIT() || dept === 'Finance' && !canManFin()) {
+    showToast('Action non autorisée', 'err'); return;
+  }
+
+  // VALIDATION : transition autorisée ?
+  if (!isValidTransition(TRANSITIONS_PRET, pret.statut, STATUS_PRET.PERDU)) {
+    showToast(`Ce prêt ne peut pas être déclaré perdu (statut : ${pret.statut})`, 'err'); return;
+  }
+
+  showConfirm(
+    `Déclarer "${pret.produit_id}" comme perdu ?`,
+    `L'actif <strong>${pret.produit_nom || pret.produit_id}</strong> confié à
+     <strong>${pret.emprunteur}</strong> sera marqué <strong>Perdu</strong>
+     et définitivement <strong>Réformé</strong>. Cette action est irréversible.`,
+    async () => {
+      try {
+        const tsNow = nowISO();
+
+        // 1. Clôturer le prêt en "Perdu"
+        const { error: pErr } = await db.from('prets').update({
+          statut:     STATUS_PRET.PERDU,
+          updated_at: tsNow,
+        }).eq('id', id);
+        if (pErr) throw pErr;
+
+        // 2. Réformer définitivement l'actif
+        const { error: aErr } = await db
+          .from('actifs_individuels')
+          .update({ statut: STATUS_ACTIF.REFORME })
+          .eq('id', pret.produit_id);
+        if (aErr) throw aErr;
+
+        showToast(`"${pret.produit_id}" déclaré perdu — réformé`, 'err');
+        await Promise.all([loadPrets(), loadActifs()]);
+        render();
+      } catch (err) {
+        showToast('Erreur : ' + err.message, 'err');
+      }
+    },
+    '#7c3aed'
   );
 };
 
@@ -424,16 +501,16 @@ window.exportPretsCSV = (dept) => {
 
   const rows = all.map(p => [
     p.id,
-    p.produit_id                  || '',   // ← nomenclature CNTO-…
-    p.produit_nom                 || '',
+    p.produit_id    || '',
+    p.produit_nom   || '',
     p.dept,
-    p.emprunteur                  || '',
-    p.valideur                    || '',
+    p.emprunteur    || '',
+    p.valideur      || '',
     fmtDate(p.date_debut || p.created_at),
-    p.date_retour_prevue          || '',
+    p.date_retour_prevue || '',
     p.date_retour_reelle ? fmtDate(p.date_retour_reelle) : '',
-    p.notes                       || '',
-    p.motif                       || '',
+    p.notes         || '',
+    p.motif         || '',
     p.statut,
   ]);
 

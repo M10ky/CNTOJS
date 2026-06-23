@@ -140,7 +140,7 @@ window.horsServiceActif = async (id) => {
   try {
     const { error } = await db
       .from('actifs_individuels')
-      .update({ statut: 'Hors service' }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
+      .update({ statut: STATUS_ACTIF.HORS_SERVICE }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" mis hors service`);
@@ -154,7 +154,7 @@ window.reactiverActif = async (id) => {
   try {
     const { error } = await db
       .from('actifs_individuels')
-      .update({ statut: 'En service' }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
+      .update({ statut: STATUS_ACTIF.EN_SERVICE }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" réactivé en service`);
@@ -172,7 +172,7 @@ window.reformerActif = async (id) => {
       try {
         const { error } = await db
           .from('actifs_individuels')
-          .update({ statut: 'Réformé' }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
+          .update({ statut: STATUS_ACTIF.REFORME }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
           .eq('id', id);
         if (error) throw error;
         showToast(`"${id}" réformé`);
