@@ -306,11 +306,11 @@ function runSearch(query) {
         };
         const { c:sc='#64748b', bg:sbg='#f1f5f9' } = stColors[p.statut] || {};
         const tab = p.dept==='IT'?'prets-it':'prets-fin';
-        return `<div class="search-result-item" onclick="closeSearch();goto('${tab}');setTimeout(()=>setInlineQuery('${escQ(p.actif_id||'')}'),200)">
+        return `<div class="search-result-item" onclick="closeSearch();goto('${tab}');setTimeout(()=>setInlineQuery('${escQ(p.produit_id||'')}'),200)">
           <div class="sri-icon" style="background:${sbg}"><i class="ti ti-transfer" style="color:${sc}"></i></div>
           <div class="sri-main">
             <div class="sri-title">
-              <code style="font-size:11px;font-family:var(--mono);color:var(--teal-d)">${highlight(p.actif_id||'—',q)}</code>
+              <code style="font-size:11px;font-family:var(--mono);color:var(--teal-d)">${highlight(p.produit_id||'—',q)}</code>
               <span style="font-size:11.5px;margin-left:6px">— ${highlight(p.produit_nom||'—',q)}</span>
             </div>
             <div class="sri-sub">${highlight(p.emprunteur||'—',q)} · retour prévu ${p.date_retour_prevue?fmtDate(p.date_retour_prevue):'—'}</div>

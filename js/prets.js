@@ -1,14 +1,16 @@
 'use strict';
 
 // ═══════════════════════════════════════════════════════════════
-//   PRÊTS — MODULE COMPLET
-//   Dépendances (ordre de chargement) : utils.js → stock.js →
-//   actifs.js → export.js → prets.js
+//   PRÊTS — MODULE COMPLET (schéma v2 aligné)
+//   Colonnes réelles prets : id, actif_id(uuid/null), produit_id(text),
+//   produit_nom, dept, emprunteur, emprunteur_id, date_debut, date_retour_prevue,
+//   date_retour_reelle, statut, motif, valideur, valideur_id, notes,
+//   created_at, updated_at
+//   → produit_id stocke la nomenclature actif (CNTO-…) car actif_id est UUID
+//   → notes stocke la destination (pas de colonne dédiée dans le schéma)
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Chargement depuis Supabase ───────────────────────────────
-// Le statut "En retard" est calculé côté client (lecture seule).
-// Aucun UPDATE automatique en base pour éviter des écritures parasites.
 async function loadPrets() {
   const { data, error } = await db
     .from('prets')
@@ -18,7 +20,7 @@ async function loadPrets() {
   const now = new Date();
   ST.prets = (data || []).map(p => ({
     ...p,
-    // Enrichissement mémoire : si "En cours" et date dépassée → "En retard"
+    // Enrichissement mémoire : "En cours" + date dépassée → "En retard"
     statut: (p.statut === 'En cours' && p.date_retour_prevue && new Date(p.date_retour_prevue) < now)
       ? 'En retard'
       : p.statut,
@@ -26,12 +28,6 @@ async function loadPrets() {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
-function isEnRetard(pret) {
-  if (!pret || pret.statut === 'Retourné') return false;
-  return !!(pret.date_retour_prevue && new Date(pret.date_retour_prevue) < new Date());
-}
-
-// Retourne le nombre de jours jusqu'au retour prévu (négatif = retard)
 function joursRestants(pret) {
   if (!pret.date_retour_prevue || pret.statut === 'Retourné') return null;
   const diff = new Date(pret.date_retour_prevue) - new Date();
@@ -50,20 +46,20 @@ function renderPrets(dept) {
   if (dept === 'IT'      && !canManIT())  return accessDenied();
   if (dept === 'Finance' && !canManFin()) return accessDenied();
 
-  const color    = dept === 'IT' ? '#4f46e5' : '#10b981';
-  const il       = ST.search.inline;
-  const q        = (il.query || '').trim();
+  const color   = dept === 'IT' ? '#4f46e5' : '#10b981';
+  const il      = ST.search.inline;
+  const q       = (il.query || '').trim();
 
   const all       = (ST.prets || []).filter(p => p.dept === dept);
   const enCours   = all.filter(p => p.statut === 'En cours');
   const enRetard  = all.filter(p => p.statut === 'En retard');
   const retournes = all.filter(p => p.statut === 'Retourné');
 
-  // Filtrage texte libre
+  // produit_id = nomenclature actif (CNTO-…)
   const filtered = all.filter(a => {
     if (!q) return true;
     return matchesQuery(
-      [a.actif_id, a.emprunteur, a.produit_nom, a.categorie, a.motif, a.destination, a.statut, a.id],
+      [a.produit_id, a.emprunteur, a.produit_nom, a.motif, a.notes, a.statut, a.id],
       q
     );
   });
@@ -75,7 +71,6 @@ function renderPrets(dept) {
     { lbl: 'Total',     val: all.length,         s: 'enregistrements',      c: '#64748b' },
   ];
 
-  // Bannière d'alerte retard
   const alertBanner = enRetard.length > 0
     ? `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
         <i class="ti ti-alert-triangle" style="color:#dc2626"></i>
@@ -83,7 +78,6 @@ function renderPrets(dept) {
       </div>`
     : '';
 
-  // Barre de recherche
   const searchBar = buildContentSearchBar({
     placeholder: `Rechercher dans les prêts ${dept} (n° actif, emprunteur, produit, motif…)`,
     count:         all.length,
@@ -92,16 +86,16 @@ function renderPrets(dept) {
 
   const hdrs = [
     'ID Prêt', 'N° Actif', 'Produit', 'Emprunteur',
-    'Date prêt', 'Retour prévu', 'Délai',
-    'Destination', 'Motif', 'Statut', 'Retour effectif', 'Action',
+    'Date début', 'Retour prévu', 'Délai',
+    'Notes / Destination', 'Motif', 'Statut', 'Retour effectif', 'Action',
   ];
 
   const rows = filtered.map(p => {
     const jours = joursRestants(p);
     let delaiCell = '<span style="color:var(--text3)">—</span>';
     if (p.statut !== 'Retourné' && jours !== null) {
-      const c2   = jours < 0 ? '#dc2626' : jours <= 2 ? '#d97706' : '#16a34a';
-      const lbl  = jours < 0
+      const c2  = jours < 0 ? '#dc2626' : jours <= 2 ? '#d97706' : '#16a34a';
+      const lbl = jours < 0
         ? `${Math.abs(jours)}j de retard`
         : jours === 0 ? 'Aujourd\'hui' : `J−${jours}`;
       delaiCell = `<span style="color:${c2};font-weight:700;font-size:11px">${lbl}</span>`;
@@ -117,16 +111,16 @@ function renderPrets(dept) {
 
     return `<tr${rowStyle}>
       <td><code style="font-size:9px">${highlight(p.id, q)}</code></td>
-      <td><code class="actif-id">${highlight(p.actif_id || '—', q)}</code></td>
+      <td><code class="actif-id">${highlight(p.produit_id || '—', q)}</code></td>
       <td style="font-weight:600;font-size:12.5px">${highlight(p.produit_nom || '—', q)}</td>
       <td style="font-weight:500">${highlight(p.emprunteur || '—', q)}</td>
-      <td>${fmtDate(p.date_pret || p.created_at)}</td>
+      <td>${fmtDate(p.date_debut || p.created_at)}</td>
       <td style="font-weight:600">${p.date_retour_prevue ? fmtDate(p.date_retour_prevue) : '—'}</td>
       <td>${delaiCell}</td>
-      <td style="font-size:11px;color:var(--text2)">${highlight(p.destination || '—', q)}</td>
+      <td style="font-size:11px;color:var(--text2)">${highlight(p.notes || '—', q)}</td>
       <td style="font-size:11px;color:var(--text3);max-width:120px">${highlight((p.motif || '').slice(0, 55), q)}</td>
       <td>${pretStatutBadge(p.statut)}</td>
-      <td style="font-size:11px;color:var(--text3)">${p.date_retour_effective ? fmtDate(p.date_retour_effective) : '—'}</td>
+      <td style="font-size:11px;color:var(--text3)">${p.date_retour_reelle ? fmtDate(p.date_retour_reelle) : '—'}</td>
       <td>${actionCell}</td>
     </tr>`;
   }).join('');
@@ -185,22 +179,20 @@ function renderModalPret() {
   document.getElementById('modal-el')?.remove();
   if (!ST.modal || ST.modal.type !== 'pret') return;
 
-  const { dept }  = ST.modal;
-  const color     = dept === 'IT' ? '#4f46e5' : '#10b981';
-  const destOpts  = ST.params.destinations.map(d => `<option value="${d}">${d}</option>`).join('');
+  const { dept } = ST.modal;
+  const color    = dept === 'IT' ? '#4f46e5' : '#10b981';
+  const destOpts = ST.params.destinations.map(d => `<option value="${d}">${d}</option>`).join('');
 
-  // Actifs disponibles pour ce département (uniquement "En service")
+  // Actifs disponibles : statut "En service" uniquement
   const actifsDispos = (ST.actifs || []).filter(a => a.dept === dept && a.statut === 'En service');
   const actifOpts    = actifsDispos.map(a =>
     `<option value="${a.id}" data-nom="${escQ(a.produit_nom || '')}">${a.id} — ${a.produit_nom || '—'} (${a.emplacement || '—'})</option>`
   ).join('');
 
-  // Date minimale de retour : demain
   const tomorrow    = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-  // Champ emprunteur : liste déroulante si allProfiles est chargé, sinon saisie libre
   const emprunteurField = ST.allProfiles.length > 0
     ? `<select id="f-pret-emprunteur">
         ${ST.allProfiles
@@ -275,13 +267,11 @@ function renderModalPret() {
 
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
       ${btn('Annuler', '#94a3b8', true, 'closeModal()')}
-      ${actifsDispos.length
-        ? btn('✓ Enregistrer le prêt', color, false, 'submitPret()')
-        : ''}
+      ${actifsDispos.length ? btn('✓ Enregistrer le prêt', color, false, 'submitPret()') : ''}
     </div>`;
 
   const ov = document.createElement('div');
-  ov.id    = 'modal-el';
+  ov.id = 'modal-el';
   ov.className = 'overlay';
   ov.innerHTML = `<div class="modal" onclick="event.stopPropagation()">
     <div class="modal-h">
@@ -294,11 +284,10 @@ function renderModalPret() {
   document.body.appendChild(ov);
 }
 
-// Auto-remplissage du champ Produit à la sélection de l'actif
 window.onActifPretChange = (sel) => {
-  const opt      = sel.options[sel.selectedIndex];
-  const prodNom  = opt?.getAttribute('data-nom') || '';
-  const inp      = document.getElementById('f-pret-produit');
+  const opt     = sel.options[sel.selectedIndex];
+  const prodNom = opt?.getAttribute('data-nom') || '';
+  const inp     = document.getElementById('f-pret-produit');
   if (inp) inp.value = prodNom;
 };
 
@@ -316,50 +305,49 @@ window.submitPret = async () => {
   const dest           = document.getElementById('f-pret-dest')?.value || '';
   const motif          = document.getElementById('f-pret-motif')?.value?.trim() || '';
 
-  // Validations
-  if (!actifId)        { showToast('Sélectionnez un actif', 'err');              return; }
-  if (!emprunteur)     { showToast('L\'emprunteur est requis', 'err');           return; }
-  if (!dateRetourPrev) { showToast('Date de retour prévue requise', 'err');      return; }
-  if (!motif)          { showToast('Le motif est requis', 'err');                return; }
+  if (!actifId)        { showToast('Sélectionnez un actif', 'err');             return; }
+  if (!emprunteur)     { showToast("L'emprunteur est requis", 'err');           return; }
+  if (!dateRetourPrev) { showToast('Date de retour prévue requise', 'err');     return; }
+  if (!motif)          { showToast('Le motif est requis', 'err');               return; }
 
-  // Vérification fraîche de la disponibilité de l'actif
   const actif = (ST.actifs || []).find(a => a.id === actifId);
   if (!actif) { showToast('Actif introuvable', 'err'); return; }
   if (actif.statut !== 'En service') {
     showToast(`"${actifId}" n'est plus disponible (statut : ${actif.statut})`, 'err'); return;
   }
 
-  // Résolution de l'emprunteur_id si profiles chargés
-  const emprunteurProfile  = ST.allProfiles.find(u => u.name === emprunteur);
-  const emprunteur_id_val  = emprunteurProfile?.id || null;
+  const emprunteurProfile = ST.allProfiles.find(u => u.name === emprunteur);
+  const emprunteur_id_val = emprunteurProfile?.id || null;
 
   const id    = genId(dept === 'IT' ? 'PRT-IT' : 'PRT-FIN');
   const tsNow = nowISO();
 
   try {
-    // 1. Créer l'enregistrement de prêt
+    // 1. Créer le prêt — colonnes alignées sur le schéma réel
+    // produit_id (text) = nomenclature actif (CNTO-…)
+    // notes = destination (pas de colonne dédiée dans la table)
+    // date_debut / date_retour_prevue = type date → todayStr() / valeur form YYYY-MM-DD
     const { error: pErr } = await db.from('prets').insert({
       id,
-      actif_id:              actifId,
-      produit_nom:           actif.produit_nom    || '',
+      produit_id:            actifId,          // ← nomenclature CNTO-… (text)
+      produit_nom:           actif.produit_nom || '',
       dept,
       emprunteur,
       emprunteur_id:         emprunteur_id_val,
-      date_pret:             tsNow,
-      date_retour_prevue:    dateRetourPrev,
-      date_retour_effective: null,
+      date_debut:            todayStr(),        // ← type date, pas timestamp
+      date_retour_prevue:    dateRetourPrev,    // ← YYYY-MM-DD depuis le form
       statut:                'En cours',
       motif,
-      destination:           dest,
-      valideur:              ST.profile?.name     || '',
-      valideur_id:           ST.user?.id          || null,
+      notes:                 dest || '',        // ← destination stockée dans notes
+      valideur:              ST.profile?.name  || '',
+      valideur_id:           ST.user?.id       || null,
       created_at:            tsNow,
       updated_at:            tsNow,
     });
     if (pErr) throw pErr;
 
-    // 2. Passer l'actif en statut "En prêt"
-    // FIX : pas de 'updated_at' sur actifs_individuels (colonne inexistante)
+    // 2. Passer l'actif en "En prêt"
+    // Pas de updated_at sur actifs_individuels (colonne inexistante)
     const { error: aErr } = await db
       .from('actifs_individuels')
       .update({ statut: 'En prêt' })
@@ -389,30 +377,30 @@ window.retournerPret = async (id) => {
   }
 
   showConfirm(
-    `Confirmer le retour de "${pret.actif_id}" ?`,
-    `L'actif <strong>${pret.produit_nom || pret.actif_id}</strong> confié à <strong>${pret.emprunteur}</strong>
-     sera marqué comme <strong>Retourné</strong> et repassera en statut <strong>En service</strong>.`,
+    `Confirmer le retour de "${pret.produit_id}" ?`,
+    `L'actif <strong>${pret.produit_nom || pret.produit_id}</strong> confié à <strong>${pret.emprunteur}</strong>
+     sera marqué <strong>Retourné</strong> et repassera en statut <strong>En service</strong>.`,
     async () => {
       try {
         const tsNow = nowISO();
 
         // 1. Clôturer le prêt
+        // date_retour_reelle = type date → todayStr()
         const { error: pErr } = await db.from('prets').update({
-          statut:                'Retourné',
-          date_retour_effective: tsNow,
-          updated_at:            tsNow,
+          statut:              'Retourné',
+          date_retour_reelle:  todayStr(),  // ← type date
+          updated_at:          tsNow,
         }).eq('id', id);
         if (pErr) throw pErr;
 
-        // 2. Remettre l'actif en service
-        // FIX : pas de 'updated_at' sur actifs_individuels
+        // 2. Remettre l'actif en service via produit_id (nomenclature CNTO-…)
         const { error: aErr } = await db
           .from('actifs_individuels')
           .update({ statut: 'En service' })
-          .eq('id', pret.actif_id);
+          .eq('id', pret.produit_id);       // ← produit_id = nomenclature actif
         if (aErr) throw aErr;
 
-        showToast(`"${pret.actif_id}" retourné — remis en service`);
+        showToast(`"${pret.produit_id}" retourné — remis en service`);
         await Promise.all([loadPrets(), loadActifs()]);
         render();
       } catch (err) {
@@ -428,24 +416,23 @@ window.exportPretsCSV = (dept) => {
   const all = (ST.prets || []).filter(p => p.dept === dept);
 
   const headers = [
-    'ID Prêt', 'N° Actif', 'Produit', 'Catégorie', 'Département',
+    'ID Prêt', 'N° Actif (nomenclature)', 'Produit', 'Département',
     'Emprunteur', 'Valideur',
-    'Date prêt', 'Retour prévu', 'Retour effectif',
-    'Destination', 'Motif', 'Statut',
+    'Date début', 'Retour prévu', 'Retour effectif',
+    'Notes / Destination', 'Motif', 'Statut',
   ];
 
   const rows = all.map(p => [
     p.id,
-    p.actif_id                    || '',
+    p.produit_id                  || '',   // ← nomenclature CNTO-…
     p.produit_nom                 || '',
-    p.categorie                   || '',
     p.dept,
     p.emprunteur                  || '',
     p.valideur                    || '',
-    fmtDT(p.date_pret || p.created_at),
+    fmtDate(p.date_debut || p.created_at),
     p.date_retour_prevue          || '',
-    p.date_retour_effective ? fmtDT(p.date_retour_effective) : '',
-    p.destination                 || '',
+    p.date_retour_reelle ? fmtDate(p.date_retour_reelle) : '',
+    p.notes                       || '',
     p.motif                       || '',
     p.statut,
   ]);
