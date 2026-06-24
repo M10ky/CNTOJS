@@ -20,15 +20,9 @@ const ST = {
   produits: [],
   mouvements: [],
   demandes: [],
-<<<<<<< HEAD
-  actifs: [],
-  prets:  [],          // ← Étape D
-  params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [] },
-=======
   actifs: [], 
   params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [], fournisseurs: [] },
   mouvementsEntrees: [],   // ← Étape D+ : toutes les entrées (sans filtre date) pour valeur cumulée
->>>>>>> 21d0be0 (D+)
   rtChannels: [],
   search: {
     query: '',
