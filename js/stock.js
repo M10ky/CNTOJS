@@ -4,9 +4,9 @@
 async function loadAllData() {
   await Promise.all([
     loadProduits(), loadMouvements(), loadDemandes(), loadParams(),
-    loadActifs(),    // ← actifs.js
-    loadPrets(),     // ← Étape D : prets.js
-    // allProfiles nécessaire pour les managers (sélecteur emprunteur dans modal prêt)
+    loadMouvementsEntrees(),  // ← Étape D+ : valeur cumulée par produit
+    loadActifs(),
+    loadPrets(),
     (isAdmin() || isSupportIT() || isResFin()) ? loadAllProfiles() : Promise.resolve(),
   ]);
 }
@@ -52,6 +52,7 @@ async function loadParams() {
     categoriesIT:  rows.filter(r=>r.cle==='categoriesIT').map(r=>r.valeur),
     categoriesFin: rows.filter(r=>r.cle==='categoriesFin').map(r=>r.valeur),
     emplacements:  rows.filter(r=>r.cle==='emplacements').map(r=>r.valeur),
+    fournisseurs:  rows.filter(r=>r.cle==='fournisseurs').map(r=>r.valeur),  // ← Étape D+
   };
 }
 
@@ -59,6 +60,16 @@ async function loadAllProfiles() {
   const { data, error } = await db.from('profiles').select('*').order('name');
   if (error) { console.error(error); return; }
   ST.allProfiles = data||[];
+}
+// ─── Étape D+ : entrées sans filtre de période ────────────────
+// Sélection minimale (produit_id + valeur) pour calculer la valeur cumulée dans prodTable.
+async function loadMouvementsEntrees() {
+  const { data, error } = await db
+    .from('mouvements')
+    .select('produit_id, qty, valeur')
+    .eq('type', 'Entrée');
+  if (error) { console.error('[loadMouvementsEntrees]', error); return; }
+  ST.mouvementsEntrees = data || [];
 }
 
 // ═══ ÉTAPE B : TOGGLE ACTIF/INACTIF ═══
@@ -90,9 +101,10 @@ window.toggleProductActif = async (id, currentlyActif) => {
 window.submitMvt = async (typeStr) => {
   const dept=ST.modal.dept;
   if (dept==='IT'&&!canManIT()||dept==='Finance'&&!canManFin()) { showToast('Action non autorisée','err'); return; }
-  const prodId = document.getElementById('f-prod')?.value;
-  const qty    = parseInt(document.getElementById('f-qty')?.value)||0;
-  const user   = document.getElementById('f-user')?.value || ST.profile?.name || 'Système';
+  const prodId   = document.getElementById('f-prod')?.value;
+  const qty      = parseInt(document.getElementById('f-qty')?.value)||0;
+  const prixUnit = parseFloat(document.getElementById('f-prix-unit')?.value) || 0;  // ← Étape D+
+  const user     = document.getElementById('f-user')?.value || ST.profile?.name || 'Système';
   const dest   = document.getElementById('f-dest')?.value || '';
   const empl   = document.getElementById('f-empl')?.value || '';
   const obs    = document.getElementById('f-obs')?.value  || '';
@@ -113,7 +125,8 @@ window.submitMvt = async (typeStr) => {
   const tsNow   = nowISO();
   try {
     const updateData = { stock: newStock, updated_at: tsNow };
-    if (typeStr === 'Entrée' && empl) updateData.emplacement = empl;
+    if (typeStr === 'Entrée' && empl)       updateData.emplacement = empl;
+    if (typeStr === 'Entrée' && prixUnit>0) updateData.prix = prixUnit; // ← mémorise dernier prix
 
     const { error: sErr } = await db.from('produits').update(updateData).eq('id', prodId);
     if (sErr) throw sErr;
@@ -126,7 +139,7 @@ window.submitMvt = async (typeStr) => {
       produit_id: prodId, 
       produit_nom: prod.nom, 
       qty, 
-      valeur: qty * prod.prix, 
+      valeur: qty * (typeStr === 'Entrée' ? prixUnit : prod.prix),  // ← Étape D+
       dept,
       user_name: user, 
       user_id: ST.user?.id, 
@@ -142,7 +155,20 @@ window.submitMvt = async (typeStr) => {
     // Un seul toast est affiché ici, avec le message d'erreur Supabase réel en
     // cas d'échec — fini les toasts qui s'écrasaient et masquaient la vraie cause.
     if (typeStr === 'Entrée' && prod.is_amortissable === true) {
-      const res = await createActifUnits(prod, qty, mvtId, empl);
+      // ← Étape D+ : numéros de série manuels depuis le formulaire
+      const ta = document.getElementById('f-serials');
+      let manualSerials = [];
+      if (ta && ta.value.trim()) {
+        manualSerials = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+        if (manualSerials.length > 0 && manualSerials.length !== qty) {
+          showToast(`${qty} numéro(s) de série requis — ${manualSerials.length} saisi(s)`, 'err');
+          return;
+        }
+        if (new Set(manualSerials).size !== manualSerials.length) {
+          showToast('Numéros de série en double détectés', 'err'); return;
+        }
+      }
+      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials);
       if (res.ok) {
         showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s) — ${res.first}${qty>1?' → '+res.last:''}`);
       } else {
@@ -153,7 +179,7 @@ window.submitMvt = async (typeStr) => {
     }
 
     closeModal();
-    await Promise.all([loadProduits(), loadMouvements(), loadActifs()]);
+    await Promise.all([loadProduits(), loadMouvements(), loadMouvementsEntrees(), loadActifs()]);
     render();
   } catch(err) { 
     showToast('Erreur: '+err.message, 'err'); 
@@ -163,55 +189,34 @@ window.submitMvt = async (typeStr) => {
 // ═══ CRUD PRODUITS ═══
 window.submitAdd = async () => {
   const dept = ST.modal.dept;
-  if (dept==='IT' && !canManIT() || dept==='Finance' && !canManFin()) { 
-    showToast('Action non autorisée','err'); 
-    return; 
+  if (dept==='IT' && !canManIT() || dept==='Finance' && !canManFin()) {
+    showToast('Action non autorisée','err'); return;
   }
+  const nom     = document.getElementById('f-nom')?.value?.trim();
+  const cat     = document.getElementById('f-cat')?.value;
+  const empl    = document.getElementById('f-add-empl')?.value || (ST.params.emplacements[0] || 'Stock Principal');
+  const seuil   = parseInt(document.getElementById('f-seuil')?.value) || 5;
+  const isAmort = document.getElementById('f-amort-chk')?.checked || false;
 
-  const nom    = document.getElementById('f-nom')?.value?.trim();
-  const cat    = document.getElementById('f-cat')?.value;
-  const stock  = parseInt(document.getElementById('f-stock')?.value) || 0;
-  const seuil  = parseInt(document.getElementById('f-seuil')?.value) || 5;
-  const prix   = parseInt(document.getElementById('f-prix')?.value) || 0;
-  const empl   = document.getElementById('f-add-empl')?.value || (ST.params.emplacements[0] || 'Stock Principal');
-  const valAch = parseInt(document.getElementById('f-val-achat')?.value) || 0;
-  const dtAch  = document.getElementById('f-date-achat')?.value || null;
-  const duree  = parseInt(document.getElementById('f-duree-amort')?.value) || 36;
-  const isAmort = document.getElementById('f-amort-chk')?.checked || false;   // ← FIX : l'id réel du checkbox dans le formulaire est 'f-amort-chk' (cf. renderModal/type==='add'), pas 'f-amortissable'. Avec l'ancien id, getElementById() renvoyait toujours null → isAmort était TOUJOURS false, quel que soit l'état coché par l'utilisateur.
-
-  if (!nom || !cat) { 
-    showToast('Nom et catégorie requis','err'); 
-    return; 
-  }
+  if (!nom || !cat) { showToast('Nom et catégorie requis','err'); return; }
 
   const id = genId(dept === 'IT' ? 'IT' : 'FIN');
-
   try {
-    const { error } = await db.from('produits').insert({ 
-      id, 
-      nom, 
-      categorie: cat, 
-      dept, 
-      stock, 
-      seuil, 
-      prix, 
-      emplacement: empl, 
-      valeur_achat: valAch, 
-      date_achat: dtAch, 
-      duree_amortissement: duree,
-      is_amortissable: isAmort,     // ← Étape C
-      actif: true 
+    const { error } = await db.from('produits').insert({
+      id, nom, categorie: cat, dept,
+      stock: 0,            // Initialisé à 0 — alimenté via les entrées en stock
+      seuil,
+      prix: 0,             // Pas de prix fixe : valeur dérivée des mouvements
+      emplacement: empl,
+      valeur_achat: 0, date_achat: null, duree_amortissement: 36,
+      is_amortissable: isAmort,
+      actif: true,
     });
-
     if (error) throw error;
-
-    closeModal(); 
-    showToast(`"${nom}" ajouté avec succès${isAmort ? ' (suivi individuel activé)' : ''}`);
-    await loadProduits(); 
-    render();
-  } catch(err) { 
-    showToast('Erreur: '+err.message,'err'); 
-  }
+    closeModal();
+    showToast(`"${nom}" créé${isAmort ? ' (suivi individuel activé)' : ''}`);
+    await loadProduits(); render();
+  } catch(err) { showToast('Erreur: '+err.message,'err'); }
 };
 
 window.submitEdit = async () => {
@@ -326,55 +331,80 @@ function renderModal() {
         <div class="form-row"><label class="form-lbl">Type d'opération</label><input value="${iE?'Entrée':'Sortie'}" disabled class="field-readonly" style="font-weight:700;color:${iE?'#16a34a':'#dc2626'}"></div>
       </div>
       <div class="form-row"><label class="form-lbl">Produit <span class="req">*</span></label>
-        <select id="f-prod"><option value="">— Sélectionner un produit ${dept} actif —</option>${prodOpts}</select></div>
+        <select id="f-prod" onchange="onMvtFieldChange()">
+          <option value="">— Sélectionner un produit ${dept} actif —</option>${prodOpts}
+        </select></div>
       <div class="form-3col">
-        <div class="form-row"><label class="form-lbl">Quantité <span class="req">*</span></label><input id="f-qty" type="number" min="1" value="1"></div>
-        <div class="form-row"><label class="form-lbl">Prix unit. (MGA)</label><input id="f-prix-unit" type="number" min="0" placeholder="Auto" readonly class="field-readonly"></div>
-        <div class="form-row"><label class="form-lbl">Agent <span class="req">*</span></label><select id="f-user">${myDeptUsers}</select></div>
+        <div class="form-row"><label class="form-lbl">Quantité <span class="req">*</span></label>
+          <input id="f-qty" type="number" min="1" value="1" oninput="onMvtFieldChange()"></div>
+        <div class="form-row">
+          <label class="form-lbl">Prix unit. (MGA)${iE?'&nbsp;<span class="req">*</span>':''}</label>
+          <input id="f-prix-unit" type="number" min="0" placeholder="0"
+            ${!iE?'readonly class="field-readonly"':'oninput="this.dataset.userEdited=\'1\'"'}></div>
+        <div class="form-row"><label class="form-lbl">Agent <span class="req">*</span></label>
+          <select id="f-user">${myDeptUsers}</select></div>
       </div>
       ${iE
         ? `<div class="form-2col">
-            <div class="form-row"><label class="form-lbl">Fournisseur</label><input id="f-fournisseur" placeholder="Nom du fournisseur…"></div>
-            <div class="form-row"><label class="form-lbl">Réf. document</label><input id="f-ref-doc" placeholder="BL-2026-XXXX…"></div>
+            <div class="form-row"><label class="form-lbl">Fournisseur</label>
+              <select id="f-fournisseur">
+                <option value="">— Sélectionner ou laisser vide —</option>
+                ${(ST.params.fournisseurs||[]).map(f=>`<option value="${escQ(f)}">${f}</option>`).join('')}
+              </select></div>
+            <div class="form-row"><label class="form-lbl">Réf. / N° facture</label>
+              <input id="f-ref-doc" placeholder="BL-2026-XXXX…"></div>
           </div>
-          <div class="form-row"><label class="form-lbl">Emplacement</label><select id="f-empl">${emplOpts}</select></div>`
+          <div class="form-row"><label class="form-lbl">Emplacement</label>
+            <select id="f-empl">${emplOpts}</select></div>
+          <div id="f-serials-section" style="display:none">
+            <div class="form-section-title">🔢 Numéros de série
+              <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">(produit amortissable)</span>
+            </div>
+            <div class="info-banner" style="margin-bottom:8px;font-size:11.5px">
+              <i class="ti ti-info-circle"></i>
+              <div>Saisissez <strong id="f-serials-count">1</strong> numéro(s), un par ligne.
+                Les suggestions peuvent être modifiées librement.</div>
+            </div>
+            <div class="form-row">
+              <textarea id="f-serials" rows="3"
+                placeholder="Un numéro par ligne…"
+                oninput="this.dataset.userEdited='1'"
+                style="font-family:var(--mono);font-size:11.5px;resize:vertical"></textarea>
+            </div>
+          </div>`
         : `<div class="form-row"><label class="form-lbl">Destination <span class="req">*</span></label><select id="f-dest"><option value="">— Sélectionner —</option>${destOpts}</select></div>`}
       <input type="hidden" id="f-dest" value="">
       <div class="form-row"><label class="form-lbl">Observation</label><input id="f-obs" placeholder="Précisions…"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
         ${btn(iE?'✓ Valider Entrée':'✓ Valider Sortie',iE?'#10b981':'#ef4444',false,`submitMvt('${iE?'Entrée':'Sortie'}')`)}</div>`;
-  } else if (type==='add') {
+} else if (type==='add') {
     title='+ Nouveau Produit';
     body=`
       <div class="form-2col">
-        <div class="form-row"><label class="form-lbl">Département</label><input value="${dept}" disabled class="field-readonly" style="font-weight:700;color:${color}"></div>
-        <div class="form-row"><label class="form-lbl">Catégorie <span class="req">*</span></label><select id="f-cat">${cats.map(c=>`<option>${c}</option>`).join('')}</select></div>
+        <div class="form-row"><label class="form-lbl">Département</label>
+          <input value="${dept}" disabled class="field-readonly" style="font-weight:700;color:${color}"></div>
+        <div class="form-row"><label class="form-lbl">Catégorie <span class="req">*</span></label>
+          <select id="f-cat">${cats.map(c=>`<option>${c}</option>`).join('')}</select></div>
       </div>
-      <div class="form-row"><label class="form-lbl">Nom du produit <span class="req">*</span></label><input id="f-nom" placeholder="Ex: Laptop Dell XPS 15…"></div>
-      <div class="form-row"><label class="form-lbl">Emplacement</label><select id="f-add-empl">${emplOpts}</select></div>
-      <div class="form-3col">
-        <div class="form-row"><label class="form-lbl">Stock initial</label><input id="f-stock" type="number" min="0" value="0"></div>
-        <div class="form-row"><label class="form-lbl">Seuil critique</label><input id="f-seuil" type="number" min="0" value="5"></div>
-        <div class="form-row"><label class="form-lbl">Prix unitaire (MGA)</label><input id="f-prix" type="number" min="0" placeholder="0"></div>
-      </div>
-      <div class="form-section-title">💰 Amortissement linéaire (optionnel)</div>
+      <div class="form-row"><label class="form-lbl">Nom du produit <span class="req">*</span></label>
+        <input id="f-nom" placeholder="Ex: Laptop Dell XPS 15…"></div>
       <div class="form-2col">
-        <div class="form-row"><label class="form-lbl">Valeur d'achat (MGA)</label><input id="f-val-achat" type="number" min="0" placeholder="0"></div>
-        <div class="form-row"><label class="form-lbl">Date d'achat</label><input id="f-date-achat" type="date"></div>
+        <div class="form-row"><label class="form-lbl">Emplacement par défaut</label>
+          <select id="f-add-empl">${emplOpts}</select></div>
+        <div class="form-row"><label class="form-lbl">Seuil d'alerte critique</label>
+          <input id="f-seuil" type="number" min="0" value="5"></div>
       </div>
-      <div class="form-row"><label class="form-lbl">Durée d'amortissement</label>
-        <select id="f-duree-amort">
-          <option value="12">12 mois — 1 an</option><option value="24">24 mois — 2 ans</option>
-          <option value="36" selected>36 mois — 3 ans</option><option value="48">48 mois — 4 ans</option>
-          <option value="60">60 mois — 5 ans</option><option value="84">84 mois — 7 ans</option>
-        </select></div>
       <div class="amort-toggle-row">
         <label class="form-lbl" style="cursor:pointer;display:flex;align-items:center;gap:8px;margin:0">
           <input type="checkbox" id="f-amort-chk" style="width:auto;accent-color:var(--teal);cursor:pointer">
           <span style="font-size:12px;color:#065f46;font-weight:600">Suivi individuel amortissable</span>
-          <span style="font-size:10px;color:var(--text3);margin-left:2px">— génère une fiche numérotée CNTO-… par unité à chaque entrée</span>
+          <span style="font-size:10px;color:var(--text3);margin-left:2px">— génère une fiche CNTO-… à chaque entrée</span>
         </label>
+      </div>
+      <div class="info-banner" style="margin-top:12px;font-size:11.5px;background:#f0fdf4;border-color:#bbf7d0;color:#065f46">
+        <i class="ti ti-info-circle" style="color:#10b981"></i>
+        <div><strong>Stock initialisé à 0.</strong> Les prix et valeurs sont définis lors des <strong>entrées de stock</strong>. Les paramètres financiers (valeur d'achat, durée d'amortissement) se configurent via ✏ dans l'inventaire.</div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
@@ -443,12 +473,8 @@ function renderModal() {
   ov.addEventListener('click', closeModal);
   document.body.appendChild(ov);
   if (type==='mvt') {
-    const sel=document.getElementById('f-prod');
-    const prixInp=document.getElementById('f-prix-unit');
-    if (sel&&prixInp) {
-      sel.addEventListener('change',()=>{ const p=ST.produits.find(x=>x.id===sel.value); if(p) prixInp.value=p.prix; else prixInp.value=''; });
-      if (ST.modal.prodId) { const p=ST.produits.find(x=>x.id===ST.modal.prodId); if(p) prixInp.value=p.prix; }
-    }
+    // Initialisation asynchrone si un produit est pré-sélectionné (ex: depuis alertes)
+    if (ST.modal.prodId) setTimeout(() => onMvtFieldChange(), 120);
   }
 }
 
@@ -456,7 +482,56 @@ window.openMvt     = (t,d,p) => { ST.modal={type:'mvt',mvtType:t,dept:d,prodId:p
 window.openAdd     = d       => { ST.modal={type:'add',dept:d}; renderModal(); };
 window.openDemande = d       => { ST.modal={type:'dem',dept:d}; renderModal(); };
 window.closeModal  = ()      => { ST.modal=null; document.getElementById('modal-el')?.remove(); };
+// ─── Étape D+ : mise à jour dynamique du formulaire d'entrée ─
+// Appelé sur onchange du produit et oninput de la quantité.
+window.onMvtFieldChange = async () => {
+  const sel     = document.getElementById('f-prod');
+  const qtyInp  = document.getElementById('f-qty');
+  const prodId  = sel?.value;
+  const qty     = parseInt(qtyInp?.value) || 1;
+  const prod    = ST.produits.find(x => x.id === prodId);
+  const iE      = ST.modal?.mvtType === 'entree';
+  const prixInp = document.getElementById('f-prix-unit');
 
+  // Prix unitaire pré-rempli (modifiable pour entrée, readonly pour sortie)
+  if (prixInp && prod && !prixInp.dataset.userEdited) {
+    prixInp.value = prod.prix || 0;
+  }
+
+  // Section numéros de série : uniquement pour les entrées amortissables
+  const serlSec = document.getElementById('f-serials-section');
+  if (!serlSec || !iE) return;
+
+  if (prod?.is_amortissable) {
+    serlSec.style.display = '';
+    const countEl = document.getElementById('f-serials-count');
+    if (countEl) countEl.textContent = qty;
+
+    const taEl = document.getElementById('f-serials');
+    if (taEl && !taEl.dataset.userEdited) {
+      // Cache du lastSeq pour éviter des requêtes répétées sur changement de qty
+      if (window._mvtCachedProdId !== prodId) {
+        try {
+          const { data: sr } = await db.from('serial_sequences')
+            .select('current_seq').eq('produit_id', prodId).maybeSingle();
+          window._mvtLastSeq     = sr?.current_seq || 0;
+          window._mvtCachedProdId = prodId;
+        } catch(e) { window._mvtLastSeq = 0; }
+      }
+      const year = new Date().getFullYear();
+      const suggestions = [];
+      for (let i = 0; i < qty; i++) {
+        // generateNomenclature est défini dans actifs.js (chargé après stock.js)
+        suggestions.push(generateNomenclature(prodId, year, window._mvtLastSeq + i + 1));
+      }
+      taEl.value = suggestions.join('\n');
+    } else if (document.getElementById('f-serials-count')) {
+      document.getElementById('f-serials-count').textContent = qty;
+    }
+  } else {
+    serlSec.style.display = 'none';
+  }
+};
 // ═══ TABLE PRODUITS ═══
 function prodTable(prods, dept, color) {
   const il = ST.search.inline;
@@ -474,7 +549,7 @@ function prodTable(prods, dept, color) {
   });
 
   const hdrs=['ID','Produit','Catégorie','Emplacement','Stock','Seuil'];
-  if (showP) hdrs.push('Prix Unit.','Valeur Stock','VNC');
+  if (showP) hdrs.push('Valeur Cumulée Entrées','VNC');  // ← Étape D+
   hdrs.push('Statut');
   if (canM) hdrs.push('Actions');
 
@@ -497,8 +572,8 @@ const rows = allFiltered.map(p => {
     <td style="color:var(--text3)">${p.seuil}</td>`;
 
   if (showP) {
-    html += `<td style="color:var(--text2)">${fmt(p.prix)} MGA</td>
-             <td style="font-weight:700">${fmt(p.stock * p.prix)} MGA</td>
+    const vCumul = getValeurTotaleProduit(p.id);  // ← Étape D+
+    html += `<td style="font-weight:700">${fmt(vCumul)} MGA</td>
              <td>${vncCell}</td>`;
   }
 
@@ -534,7 +609,7 @@ const rows = allFiltered.map(p => {
   const nbActif   = prods.filter(p=>isActif(p)).length;
   const nbInactif = prods.length - nbActif;
   const headerInfo = showP
-    ? `${allFiltered.length} référence(s) · Valeur: ${fmt(allFiltered.filter(p=>isActif(p)).reduce((s,p)=>s+p.stock*p.prix,0))} MGA${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`
+    ? `${allFiltered.length} référence(s) · Valeur cumulée: ${fmt(allFiltered.filter(p=>isActif(p)).reduce((s,p)=>s+getValeurTotaleProduit(p.id),0))} MGA${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`
     : `${allFiltered.length} référence(s)${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`;
 
   return `${searchBar}<div class="card">
@@ -554,7 +629,7 @@ const rows = allFiltered.map(p => {
 // ═══ RENDER PAGES STOCK ═══
 function renderStockIT() {
   const allIT = ST.produits.filter(p => p.dept === 'IT');
-  const v = allIT.filter(p => isActif(p)).reduce((s, p) => s + p.stock * p.prix, 0);
+  const v = allIT.filter(p => isActif(p)).reduce((s, p) => s + getValeurTotaleProduit(p.id), 0);
   const totalRefs = allIT.length;
   const inactifs = allIT.filter(p => !isActif(p)).length;
 
@@ -565,7 +640,7 @@ function renderStockIT() {
 
 function renderStockFin() {
   const allFin = ST.produits.filter(p => p.dept === 'Finance');
-  const v = allFin.filter(p => isActif(p)).reduce((s, p) => s + p.stock * p.prix, 0);
+  const v = allFin.filter(p => isActif(p)).reduce((s, p) => s + getValeurTotaleProduit(p.id), 0);
   const totalRefs = allFin.length;
   const inactifs = allFin.filter(p => !isActif(p)).length;
 
@@ -593,7 +668,8 @@ function renderMvt(dept) {
     <td>${typeBadge(m.type)}</td>
     <td style="font-weight:500">${highlight(m.produit_nom,q)}</td>
     <td style="font-weight:700">${m.qty}</td>
-    <td>${fmt(m.valeur)} MGA</td>
+    <td style="font-size:11px;color:var(--text2)">${m.qty>0?fmt(Math.round((m.valeur||0)/m.qty)):0} MGA</td>
+    <td style="font-weight:700">${fmt(m.valeur)} MGA</td>
     <td style="font-size:11px;color:var(--text2)">${highlight(m.emplacement||'—',q)}</td>
     <td style="font-size:11px;color:var(--text2)">${highlight(m.destination||'—',q)}</td>
     <td style="font-size:11px;color:var(--text2)">${highlight(m.fournisseur||'—',q)}</td>
@@ -601,7 +677,7 @@ function renderMvt(dept) {
     <td style="font-size:11px;color:var(--text3)">${highlight(m.user_name,q)}</td>
     <td style="font-size:11px;color:var(--text3);max-width:100px">${m.observation||''}</td>
   </tr>`).join('');
-  const emptyRow = !mvt.length ? `<tr class="no-result-row"><td colspan="12"><div class="nri">🔍</div><div class="nrt">Aucun mouvement ne correspond</div><div style="font-size:11px;margin-top:4px"><a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">Réinitialiser les filtres</a></div></td></tr>` : '';
+  const emptyRow = !mvt.length ? `<tr class="no-result-row"><td colspan="13"><div class="nri">🔍</div><div class="nrt">Aucun mouvement ne correspond</div><div style="font-size:11px;margin-top:4px"><a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">Réinitialiser les filtres</a></div></td></tr>` : '';
   return `<p class="page-title">Mouvements ${dept}</p>
     <p class="page-sub">${mvt.length} / ${allMvt.length} mouvement(s) · ↓ ${totE} entrée · ↑ ${totS} sortie</p>
     <div class="btn-row" style="margin-bottom:12px">
@@ -611,7 +687,7 @@ function renderMvt(dept) {
     </div>
     ${searchBar}
     <div class="card"><div style="overflow-x:auto"><table>
-      <thead><tr>${['ID','Date & Heure','Type','Produit','Qté','Valeur','Emplacement','Destination','Fournisseur','Réf. Doc.','Agent','Observation'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <thead><tr>${['ID','Date & Heure','Type','Produit','Qté','Prix Unit.','Valeur Totale','Emplacement','Destination','Fournisseur','Réf. Doc.','Agent','Observation'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${rows||emptyRow}</tbody>
     </table></div></div>`;
 }

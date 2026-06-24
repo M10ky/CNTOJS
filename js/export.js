@@ -72,7 +72,7 @@ window.exportProduitsCSV = (dept) => {
   ];
   if (showP) {
     headers.push(
-      'Prix unitaire (MGA)', 'Valeur stock (MGA)',
+      'Valeur cumulée entrées (MGA)',  // ← Étape D+
       'Valeur achat (MGA)', 'Date achat',
       'Durée amort. (mois)', 'VNC (MGA)', '% Amorti'
     );
@@ -87,8 +87,7 @@ window.exportProduitsCSV = (dept) => {
     ];
     if (showP) {
       row.push(
-        p.prix         || 0,
-        p.stock * (p.prix || 0),
+        getValeurTotaleProduit(p.id),  // ← Étape D+
         p.valeur_achat || 0,
         p.date_achat   || '',
         p.duree_amortissement || '',
@@ -112,7 +111,7 @@ window.exportMouvementsCSV = (dept) => {
 
   const headers = [
     'ID', 'Date & Heure', 'Type', 'Produit', 'Quantité',
-    'Valeur (MGA)', 'Emplacement', 'Destination',
+    'Prix unitaire (MGA)', 'Valeur totale (MGA)', 'Emplacement', 'Destination',  // ← Étape D+
     'Fournisseur', 'Réf. Document', 'Agent', 'Observation'
   ];
   const rows = mvt.map(m => [
@@ -121,6 +120,7 @@ window.exportMouvementsCSV = (dept) => {
     m.type,
     m.produit_nom,
     m.qty,
+    m.qty > 0 ? Math.round((m.valeur || 0) / m.qty) : 0,  // ← Prix unitaire calculé
     m.valeur  || 0,
     m.emplacement || '',
     m.destination || '',

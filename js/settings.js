@@ -91,6 +91,15 @@ function renderParams() {
       <div class="tag-add-row"><input id="new-empl" placeholder="Ex: Stock Principal, Réserve B…" onkeydown="if(event.key==='Enter')addParam('emplacements','new-empl')">${btn('Ajouter','#6366f1',false,"addParam('emplacements','new-empl')",'ti-plus')}</div>
     </div>
     <div class="param-section">
+      <div class="param-title"><i class="ti ti-truck" style="color:#0ea5e9"></i>Fournisseurs</div>
+      <div class="tag-list">${mkList(ST.params.fournisseurs||[],'fournisseurs')}</div>
+      <div class="tag-add-row">
+        <input id="new-fourn" placeholder="Ex: SIMKO, Digit Technology, Connectic…"
+          onkeydown="if(event.key==='Enter')addParam('fournisseurs','new-fourn')">
+        ${btn('Ajouter','#0ea5e9',false,"addParam('fournisseurs','new-fourn')",'ti-plus')}
+      </div>
+    </div>
+    <div class="param-section">
       <div class="param-title"><i class="ti ti-device-laptop" style="color:#4f46e5"></i>Catégories IT</div>
       <div class="tag-list">${mkList(ST.params.categoriesIT,'categoriesIT')}</div>
       <div class="tag-add-row"><input id="new-cat-it" placeholder="Nouvelle catégorie IT…" onkeydown="if(event.key==='Enter')addParam('categoriesIT','new-cat-it')">${btn('Ajouter','#4f46e5',false,"addParam('categoriesIT','new-cat-it')",'ti-plus')}</div>
@@ -102,8 +111,8 @@ function renderParams() {
     </div>
     <div class="param-section" style="background:#fafbff">
       <div class="param-title"><i class="ti ti-info-circle" style="color:#6366f1"></i>Informations système</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-        ${[['Produits IT',ST.produits.filter(p=>p.dept==='IT').length,'#4f46e5'],['Produits Finance',ST.produits.filter(p=>p.dept==='Finance').length,'#10b981'],['Utilisateurs',ST.allProfiles.length,'#f59e0b'],['Destinations',ST.params.destinations.length,'#00c9a7']].map(([l,v,c])=>`<div style="background:#fff;border:1px solid var(--border);border-radius:9px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:${c}">${v}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${l}</div></div>`).join('')}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px">
+        ${[['Produits IT',ST.produits.filter(p=>p.dept==='IT').length,'#4f46e5'],['Produits Finance',ST.produits.filter(p=>p.dept==='Finance').length,'#10b981'],['Utilisateurs',ST.allProfiles.length,'#f59e0b'],['Destinations',ST.params.destinations.length,'#00c9a7'],['Fournisseurs',(ST.params.fournisseurs||[]).length,'#0ea5e9']].map(([l,v,c])=>`<div style="background:#fff;border:1px solid var(--border);border-radius:9px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:${c}">${v}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${l}</div></div>`).join('')}
       </div>
     </div>`;
 }

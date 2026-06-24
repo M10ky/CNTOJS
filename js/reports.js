@@ -2,8 +2,9 @@
 
 // ═══ DASHBOARD ═══
 function renderDashboard() {
-  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+p.stock*p.prix,0);
-  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+p.stock*p.prix,0);
+  // ← Étape D+ : valeur = cumul de toutes les entrées (via ST.mouvementsEntrees)
+  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
+  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
   const alIT=alertsIT().length, alFin=alertsFin().length;
   const showP=canSeePrix();
   const kpis=[];
@@ -44,8 +45,8 @@ function renderDashboard() {
 
 // ── RAPPORTS ──
 function renderRapports() {
-  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+p.stock*p.prix,0);
-  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+p.stock*p.prix,0);
+  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
+  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
   const demIT=ST.demandes.filter(d=>d.dept==='IT');
   const demFin=ST.demandes.filter(d=>d.dept==='Finance');
   const tIT=demIT.length?Math.round(demIT.filter(d=>d.statut==='Validé').length/demIT.length*100):0;
@@ -151,8 +152,8 @@ function drawCharts() {
     new Chart(document.getElementById('chart-mvt'),{type:'bar',data:{labels:dates.map(d=>new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),datasets:[{label:'Entrées',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Entrée').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#10b981',borderRadius:4},{label:'Sorties',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Sortie').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#ef4444',borderRadius:4}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
   if (document.getElementById('chart-pie')) {
-    const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+p.stock*p.prix,0);
-    const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+p.stock*p.prix,0);
+    const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
+    const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
     const data=[],labels=[],colors=[];
     if (canSeeIT())  { data.push(Math.round(vIT/1e6));  labels.push('IT');      colors.push('#4f46e5'); }
     if (canSeeFin()) { data.push(Math.round(vFin/1e6)); labels.push('Finance'); colors.push('#10b981'); }
@@ -169,7 +170,7 @@ function drawCharts() {
     new Chart(document.getElementById('chart-cat-fin'),{type:'bar',data:{labels:sorted.map(([k])=>k),datasets:[{data:sorted.map(([,v])=>v),backgroundColor:'#10b981',borderRadius:3}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
   }
   if (document.getElementById('chart-empl')) {
-    const byEmpl={};ST.produits.forEach(p=>{const e=p.emplacement||'Non défini';byEmpl[e]=(byEmpl[e]||0)+p.stock*p.prix;});
+    const byEmpl={};ST.produits.forEach(p=>{const e=p.emplacement||'Non défini';byEmpl[e]=(byEmpl[e]||0)+getValeurTotaleProduit(p.id);});
     const sorted=Object.entries(byEmpl).sort((a,b)=>b[1]-a[1]).slice(0,5);
     new Chart(document.getElementById('chart-empl'),{type:'bar',data:{labels:sorted.map(([k])=>k),datasets:[{data:sorted.map(([,v])=>Math.round(v/1e6*100)/100),backgroundColor:'#6366f1',borderRadius:3}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9},callback:v=>v+'M'},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
   }

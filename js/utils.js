@@ -20,9 +20,15 @@ const ST = {
   produits: [],
   mouvements: [],
   demandes: [],
+<<<<<<< HEAD
   actifs: [],
   prets:  [],          // ← Étape D
   params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [] },
+=======
+  actifs: [], 
+  params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [], fournisseurs: [] },
+  mouvementsEntrees: [],   // ← Étape D+ : toutes les entrées (sans filtre date) pour valeur cumulée
+>>>>>>> 21d0be0 (D+)
   rtChannels: [],
   search: {
     query: '',
@@ -111,6 +117,14 @@ const attenteFin = () => ST.demandes.filter(d => d.dept==='Finance' && d.statut=
 const isActif = p => p.actif !== false;
 
 const getStatus = p => p.stock===0 ? 'Rupture' : p.stock<=p.seuil ? 'Critique' : 'Disponible';
+// ─── VALEUR TOTALE CUMULÉE (Étape D+) ────────────────────────
+// Somme de la valeur de toutes les entrées historiques pour un produit.
+// Source : ST.mouvementsEntrees (chargé sans filtre de période).
+function getValeurTotaleProduit(produitId) {
+  return (ST.mouvementsEntrees || [])
+    .filter(m => m.produit_id === produitId)
+    .reduce((s, m) => s + (m.valeur || 0), 0);
+}
 
 const statusTag = s => s==='Rupture'
   ? `<span class="tag" style="color:#dc2626;background:#fef2f2">● Rupture</span>`

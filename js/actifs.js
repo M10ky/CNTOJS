@@ -48,7 +48,7 @@ function generateNomenclature(produitId, year, seq) {
 // (submitMvt) sache si la création a réellement réussi ET puisse afficher
 // le message d'erreur Supabase réel dans un seul toast — au lieu d'un toast
 // de succès factice, ou de deux toasts qui s'écrasaient l'un l'autre.
-window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
+window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = []) => {
   try {
     // Préfixe de nomenclature pour ce produit (dept + catégorie) — réutilisé
     // pour la colonne 'prefix' de serial_sequences ET pour générer chaque ID.
@@ -74,8 +74,12 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement) => {
 
     for (let i = 0; i < qty; i++) {
       const seq = lastSeq + i + 1;
+      // ← Étape D+ : numéro manuel s'il est fourni, sinon génération automatique
+      const actifId = (manualSerials[i] && manualSerials[i].trim())
+        ? manualSerials[i].trim()
+        : generateNomenclature(prod.id, year, seq);
       actifs.push({
-        id:                  generateNomenclature(prod.id, year, seq),
+        id:                  actifId,
         produit_id:          prod.id,
         produit_nom:         prod.nom,
         categorie:           prod.categorie            || '',
