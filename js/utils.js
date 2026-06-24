@@ -240,41 +240,136 @@ function renderActiveFiltersBar() {
 
 window.clearOneFilter = (key) => { ST.search.inline[key] = ''; renderActiveFiltersBar(); render(); };
 
+// ─── Setter dédié pour la catégorie (select onChange) ─────────
+window.setInlineCat = (val) => {
+  ST.search.inline.cat = (val === '__all__') ? '' : val;
+  renderActiveFiltersBar();
+  render();
+};
+
 function buildContentSearchBar(opts = {}) {
   const il = ST.search.inline;
   const {
-    showDept = false, showCat = false, cats = [],
-    showStatut = false, showType = false,
-    showUrgence = false, showStatDem = false,
-    showActif = false,   // ← ÉTAPE B
-    placeholder = 'Rechercher…', count = 0, filteredCount = 0,
+    showDept    = false,
+    showCat     = false, cats = [],
+    showStatut  = false,
+    showType    = false,
+    showUrgence = false,
+    showStatDem = false,
+    showActif   = false,
+    placeholder = 'Rechercher…',
+    count       = 0,
+    filteredCount = 0,
   } = opts;
-  const pill = (label, key, val, cls='') => {
+
+  const pill = (label, key, val, cls = '') => {
     const active = il[key] === val;
-    return `<span class="csb-pill${active?' on'+cls:''}" onclick="toggleInlineFilter('${key}','${val}')">${label}</span>`;
+    return `<span class="csb-pill${active ? ' on' + cls : ''}" onclick="toggleInlineFilter('${key}','${val}')">${label}</span>`;
   };
-  let filtersHtml = '';
-  if (showDept)   filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Dépt</span>${pill('IT','dept','IT','-it')}${pill('Finance','dept','Finance','-fin')}`;
-  if (showCat && cats.length) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Catég.</span>${cats.map(c=>pill(c,'cat',c)).join('')}`;
-  if (showStatut) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Stock</span>${pill('Dispo','statut','Disponible','-ok')}${pill('Critique','statut','Critique','-amber')}${pill('Rupture','statut','Rupture','-red')}`;
-  if (showType)   filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Type</span>${pill('↓ Entrée','type','Entrée','-ok')}${pill('↑ Sortie','type','Sortie','-red')}`;
-  if (showUrgence) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Urgence</span>${pill('Normale','urgence','Normale','-ok')}${pill('Urgente','urgence','Urgente','-amber')}${pill('Critique','urgence','Critique','-red')}`;
-  if (showStatDem) filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">Statut</span>${pill('En attente','statDem','En attente','-amber')}${pill('Validé','statDem','Validé','-ok')}${pill('Refusé','statDem','Refusé','-red')}`;
-  // ← ÉTAPE B : filtre actif/inactif
-  if (showActif)  filtersHtml += `<span class="sf-divider"></span><span class="csb-filter-label">État</span>${pill('Actifs','actif','true','-ok')}${pill('Inactifs','actif','false','-red')}`;
-  const showCount = `<span class="csb-count">${filteredCount} / ${count} résultat${filteredCount!==1?'s':''}</span>`;
-  const resetBtn = hasActiveFilters() ? `<button class="csb-reset" onclick="resetInlineFilters()"><i class="ti ti-x" style="font-size:11px"></i> Réinitialiser</button>` : '';
-  return `<div class="content-search-bar">
-    <div class="csb-input-wrap">
-      <i class="ti ti-search"></i>
-      <input class="csb-input" type="text" placeholder="${placeholder}"
-        value="${(il.query||'').replace(/"/g,'&quot;')}"
-        oninput="setInlineFilterQuery(this.value)"
-        onkeydown="if(event.key==='Escape'){setInlineFilterQuery('');this.value='';}">
-    </div>
-    <div class="csb-filter-group">${filtersHtml}</div>
-    ${showCount}${resetBtn}
-  </div>`;
+
+  // ── Ligne 1 : recherche texte ────────────────────────────────
+  const searchRow = `
+    <div class="csb-row csb-row-search">
+      <div class="csb-input-wrap">
+        <i class="ti ti-search"></i>
+        <input class="csb-input" type="text" placeholder="${placeholder}"
+          value="${(il.query || '').replace(/"/g, '&quot;')}"
+          oninput="setInlineFilterQuery(this.value)"
+          onkeydown="if(event.key==='Escape'){setInlineFilterQuery('');this.value='';}">
+        ${il.query
+          ? `<button class="csb-clear-input" onclick="setInlineFilterQuery('');document.querySelector('.csb-input').value=''" title="Effacer">
+               <i class="ti ti-x"></i>
+             </button>`
+          : ''}
+      </div>
+      <span class="csb-count">${filteredCount} / ${count} résultat${filteredCount !== 1 ? 's' : ''}</span>
+      ${hasActiveFilters()
+        ? `<button class="csb-reset" onclick="resetInlineFilters()">
+             <i class="ti ti-refresh" style="font-size:11px"></i> Réinitialiser
+           </button>`
+        : ''}
+    </div>`;
+
+  // ── Ligne 2 : filtres (dropdown catégorie + pills) ───────────
+  let filterChips = '';
+
+  if (showDept) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <span class="csb-filter-label">Dépt</span>
+        ${pill('IT', 'dept', 'IT', '-it')}
+        ${pill('Finance', 'dept', 'Finance', '-fin')}
+      </div>`;
+  }
+
+  if (showCat && cats.length) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <label class="csb-filter-label" for="csb-cat-sel">Catégorie</label>
+        <select id="csb-cat-sel" class="csb-cat-select" onchange="setInlineCat(this.value)" title="Filtrer par catégorie">
+          <option value="__all__" ${!il.cat ? 'selected' : ''}>Toutes catégories</option>
+          ${cats.map(c => `<option value="${escQ(c)}" ${il.cat === c ? 'selected' : ''}>${c}</option>`).join('')}
+        </select>
+      </div>`;
+  }
+
+  if (showStatut) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <span class="csb-filter-label">Stock</span>
+        ${pill('Dispo',    'statut', 'Disponible', '-ok')}
+        ${pill('Critique', 'statut', 'Critique',   '-amber')}
+        ${pill('Rupture',  'statut', 'Rupture',    '-red')}
+      </div>`;
+  }
+
+  if (showType) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <span class="csb-filter-label">Type</span>
+        ${pill('↓ Entrée', 'type', 'Entrée', '-ok')}
+        ${pill('↑ Sortie', 'type', 'Sortie', '-red')}
+      </div>`;
+  }
+
+  if (showUrgence) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <span class="csb-filter-label">Urgence</span>
+        ${pill('Normale',  'urgence', 'Normale',  '-ok')}
+        ${pill('Urgente',  'urgence', 'Urgente',  '-amber')}
+        ${pill('Critique', 'urgence', 'Critique', '-red')}
+      </div>`;
+  }
+
+  if (showStatDem) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <span class="csb-filter-label">Statut</span>
+        ${pill('En attente', 'statDem', 'En attente', '-amber')}
+        ${pill('Validé',     'statDem', 'Validé',     '-ok')}
+        ${pill('Refusé',     'statDem', 'Refusé',     '-red')}
+      </div>`;
+  }
+
+  if (showActif) {
+    filterChips += `
+      <div class="csb-chip-group">
+        <span class="csb-filter-label">État</span>
+        ${pill('Actifs',   'actif', 'true',  '-ok')}
+        ${pill('Inactifs', 'actif', 'false', '-red')}
+      </div>`;
+  }
+
+  const filtersRow = filterChips
+    ? `<div class="csb-row csb-row-filters">${filterChips}</div>`
+    : '';
+
+  return `
+    <div class="content-search-bar">
+      ${searchRow}
+      ${filtersRow}
+    </div>`;
 }
 
 function applyInlineFilters(items, type = 'produit') {

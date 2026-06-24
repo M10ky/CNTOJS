@@ -541,9 +541,11 @@ function prodTable(prods, dept, color) {
   const showP = canSeePrix();
   const q = (il.query||'').trim();
 
+  const deptCats = dept === 'IT' ? ST.params.categoriesIT : ST.params.categoriesFin;
   const searchBar = buildContentSearchBar({
-    showCat: true, cats, showStatut: true,
-    showActif: true,   // ← ÉTAPE B
+    showCat:   true, cats: deptCats,
+    showStatut: true,
+    showActif:  true,
     placeholder: `Rechercher dans l'inventaire ${dept}…`,
     count: prods.length, filteredCount: allFiltered.length,
   });
