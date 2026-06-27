@@ -168,7 +168,8 @@ window.submitMvt = async (typeStr) => {
           showToast('Numéros de série en double détectés', 'err'); return;
         }
       }
-      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials);
+      // FIX : prixUnit transmis pour que chaque actif créé porte le bon prix d'entrée
+      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
       if (res.ok) {
         showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s) — ${res.first}${qty>1?' → '+res.last:''}`);
       } else {

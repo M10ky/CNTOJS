@@ -35,7 +35,8 @@ const ST = {
       type: '',
       urgence: '',
       statDem: '',
-      actif: '',        // ← ÉTAPE B : '' = tous | 'true' = actifs seul. | 'false' = inactifs seul.
+      actif: '',        // ← ÉTAPE B
+      userRole: '',     // ← filtre rôle dans l'onglet Utilisateurs
     }
   },
   searchDebounce: null,
@@ -91,16 +92,18 @@ const isSupportIT = () => curRole() === 'Support IT';
 const isResFin    = () => curRole() === 'Responsable Finance';
 const isUserIT    = () => curRole() === 'Utilisateur IT';
 const isUserFin   = () => curRole() === 'Utilisateur Finance';
-const canSeeIT    = () => isAdmin() || isSupportIT() || isUserIT();
-const canSeeFin   = () => isAdmin() || isResFin()    || isUserFin();
-const canSeePrix  = () => isAdmin() || isSupportIT() || isResFin();
+const isLecteur   = () => curRole() === 'Lecteur'; // lecture seule : Dashboard, Stock, Historique, Rapports
+
+const canSeeIT    = () => isAdmin() || isSupportIT() || isUserIT() || isLecteur();
+const canSeeFin   = () => isAdmin() || isResFin()    || isUserFin() || isLecteur();
+const canSeePrix  = () => isAdmin() || isSupportIT() || isResFin(); // Lecteur ne voit pas les prix
 const canManIT    = () => isAdmin() || isSupportIT();
 const canManFin   = () => isAdmin() || isResFin();
 const canValidIT  = () => canManIT();
 const canValidFin = () => canManFin();
-const canSeeHist  = () => isAdmin();
-const canDemIT    = () => canSeeIT();
-const canDemFin   = () => canSeeFin();
+const canSeeHist  = () => isAdmin() || isLecteur(); // Lecteur accède à Historique + Rapports + Amortissement
+const canDemIT    = () => !isLecteur() && canSeeIT();  // Lecteur ne peut pas créer de demandes
+const canDemFin   = () => !isLecteur() && canSeeFin();
 
 const alertsIT   = () => ST.produits.filter(p => p.dept==='IT'      && p.actif!==false && (p.stock<=p.seuil||p.stock===0));
 const alertsFin  = () => ST.produits.filter(p => p.dept==='Finance' && p.actif!==false && (p.stock<=p.seuil||p.stock===0));
@@ -202,7 +205,7 @@ function escQ(s) { return String(s||'').replace(/'/g,"\\'").replace(/"/g,''); }
 // ═══ INLINE SEARCH HELPERS ═══
 window.setInlineQuery = (q) => { ST.search.inline.query = q; render(); };
 window.resetInlineFilters = () => {
-  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'', actif:'' };
+  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'', actif:'', userRole:'' };
   renderActiveFiltersBar(); render();
 };
 window.toggleInlineFilter = (key, val) => {
@@ -210,7 +213,27 @@ window.toggleInlineFilter = (key, val) => {
   else ST.search.inline[key] = val;
   renderActiveFiltersBar(); render();
 };
-window.setInlineFilterQuery = (q) => { ST.search.inline.query = q; renderActiveFiltersBar(); render(); };
+window.setInlineFilterQuery = (q) => {
+  ST.search.inline.query = q;
+  renderActiveFiltersBar();
+  // FIX : le render() détruit puis recrée le DOM → l'input perd le focus à chaque frappe.
+  // Débounce 80ms + restauration du focus/curseur après rebuild du DOM.
+  clearTimeout(ST._csbTimer);
+  ST._csbTimer = setTimeout(() => {
+    const activeEl = document.activeElement;
+    const isCsb    = activeEl?.classList?.contains('csb-input');
+    const selStart = isCsb ? activeEl.selectionStart : null;
+    const selEnd   = isCsb ? activeEl.selectionEnd   : null;
+    render();
+    if (isCsb) {
+      const inp = document.querySelector('.csb-input');
+      if (inp) {
+        inp.focus();
+        try { inp.setSelectionRange(selStart ?? q.length, selEnd ?? q.length); } catch(e) {}
+      }
+    }
+  }, 80);
+};
 
 function hasActiveFilters() {
   const il = ST.search.inline;
@@ -246,6 +269,9 @@ window.setInlineCat = (val) => {
   renderActiveFiltersBar();
   render();
 };
+
+/** Filtre par rôle dans l'onglet Utilisateurs */
+window.setUserRoleFilter = (val) => { ST.search.inline.userRole = val; render(); };
 
 function buildContentSearchBar(opts = {}) {
   const il = ST.search.inline;

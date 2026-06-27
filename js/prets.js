@@ -216,9 +216,13 @@ function renderModalPret() {
   const color    = dept === 'IT' ? '#4f46e5' : '#10b981';
   const destOpts = ST.params.destinations.map(d => `<option value="${d}">${d}</option>`).join('');
 
-  const actifsDispos = (ST.actifs || []).filter(
-    a => a.dept === dept && a.statut === STATUS_ACTIF.EN_SERVICE
-  );
+  const actifsDispos = (ST.actifs || []).filter(a => {
+    if (a.dept !== dept) return false;
+    if (a.statut !== STATUS_ACTIF.EN_SERVICE) return false;
+    // Exclure les actifs dont le produit parent est désactivé (actif = false)
+    const prodParent = ST.produits.find(p => p.id === a.produit_id);
+    return !prodParent || isActif(prodParent);
+  });
   const actifOpts = actifsDispos.map(a =>
     `<option value="${a.id}" data-nom="${escQ(a.produit_nom || '')}" data-produit-id="${escQ(a.produit_id || '')}">
       ${a.id} — ${a.produit_nom || '—'} (${a.emplacement || '—'})

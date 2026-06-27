@@ -48,7 +48,8 @@ function generateNomenclature(produitId, year, seq) {
 // (submitMvt) sache si la création a réellement réussi ET puisse afficher
 // le message d'erreur Supabase réel dans un seul toast — au lieu d'un toast
 // de succès factice, ou de deux toasts qui s'écrasaient l'un l'autre.
-window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = []) => {
+// prixUnit : prix de l'entrée en cours — prioritaire sur prod.valeur_achat (fix bug prix actifs)
+window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = [], prixUnit = null) => {
   try {
     // Préfixe de nomenclature pour ce produit (dept + catégorie) — réutilisé
     // pour la colonne 'prefix' de serial_sequences ET pour générer chaque ID.
@@ -86,7 +87,9 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = 
         dept:                prod.dept,
         emplacement:         emplacement || prod.emplacement || '',
         date_entree:         now,
-        valeur_achat:        prod.valeur_achat         || 0,
+        // FIX : utilise le prix de l'entrée en cours s'il est fourni,
+        // sinon repli sur la valeur_achat du produit catalogue.
+        valeur_achat:        (prixUnit !== null && prixUnit > 0) ? prixUnit : (prod.valeur_achat || 0),
         date_achat:          prod.date_achat           || null,
         duree_amortissement: prod.duree_amortissement  || 36,
         statut:              'En service',

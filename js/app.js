@@ -6,9 +6,11 @@ function buildNav() {
   const d=curDept();
   if      (d==='IT')      { db_el.className='dept-banner it';  db_el.innerHTML='<i class="ti ti-device-laptop"></i>Département IT'; }
   else if (d==='Finance') { db_el.className='dept-banner fin'; db_el.innerHTML='<i class="ti ti-cash"></i>Département Finance'; }
+  else if (isLecteur())   { db_el.className='dept-banner adm'; db_el.innerHTML='<i class="ti ti-eye"></i>Vue Lecture'; }
   else                    { db_el.className='dept-banner adm'; db_el.innerHTML='<i class="ti ti-shield"></i>Administrateur'; }
   let h='';
-  if (isAdmin() || isSupportIT() || isResFin()) {
+  // Dashboard : visible pour les managers, admin et lecteurs
+  if (isAdmin() || isSupportIT() || isResFin() || isLecteur()) {
     h+=`<div class="nav-sec">VUE GÉNÉRALE</div>`;
     h+=ni('dashboard','ti-layout-dashboard','Dashboard');
   }
@@ -16,19 +18,20 @@ function buildNav() {
     h+=`<div class="nav-sec">STOCK IT</div>`;
     h+=ni('stock-it','ti-device-laptop','Inventaire IT');
     if (canManIT()) h+=ni('mvt-it','ti-arrows-exchange','Mouvements IT');
-    h+=ni('dem-it','ti-clipboard-list','Demandes IT', canManIT()?attenteIT():0);
+    // canDemIT() exclut déjà le Lecteur
+    if (canDemIT()) h+=ni('dem-it','ti-clipboard-list','Demandes IT', canManIT()?attenteIT():0);
     if (canManIT()) h+=ni('alertes-it','ti-bell','Alertes IT',alertsIT().length,'#ef4444');
-    if (canManIT()) h+=ni('actifs-it','ti-devices','Actifs IT');   // ← Étape C
-    if (canManIT()) h+=ni('prets-it','ti-transfer','Prêts IT');    // ← Étape D
+    if (canManIT()) h+=ni('actifs-it','ti-devices','Actifs IT');
+    if (canManIT()) h+=ni('prets-it','ti-transfer','Prêts IT');
   }
   if (canSeeFin()) {
     h+=`<div class="nav-sec">STOCK FINANCE</div>`;
     h+=ni('stock-fin','ti-files','Inventaire Finance');
     if (canManFin()) h+=ni('mvt-fin','ti-arrows-exchange','Mouvements Finance');
-    h+=ni('dem-fin','ti-clipboard-list','Demandes Finance', canManFin()?attenteFin():0);
+    if (canDemFin()) h+=ni('dem-fin','ti-clipboard-list','Demandes Finance', canManFin()?attenteFin():0);
     if (canManFin()) h+=ni('alertes-fin','ti-bell','Alertes Finance',alertsFin().length,'#ef4444');
-    if (canManFin()) h+=ni('actifs-fin','ti-devices','Actifs Finance');  // ← Étape C
-    if (canManFin()) h+=ni('prets-fin','ti-transfer','Prêts Finance');   // ← Étape D
+    if (canManFin()) h+=ni('actifs-fin','ti-devices','Actifs Finance');
+    if (canManFin()) h+=ni('prets-fin','ti-transfer','Prêts Finance');
   }
   if (canSeeHist()) { 
     h+=`<div class="nav-sec">ANALYSE</div>`;

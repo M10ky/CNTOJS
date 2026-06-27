@@ -106,6 +106,7 @@ function showApp() {
   else if (isResFin())    ST.tab='stock-fin';
   else if (isUserIT())    ST.tab='dem-it';
   else if (isUserFin())   ST.tab='dem-fin';
+  else if (isLecteur())   ST.tab='dashboard';
   else                    ST.tab='dashboard';
   const p=ST.profile;
   if (p) {
