@@ -104,7 +104,8 @@ window.submitMvt = async (typeStr) => {
   const prodId   = document.getElementById('f-prod')?.value;
   const qty      = parseInt(document.getElementById('f-qty')?.value)||0;
   const prixUnit = parseFloat(document.getElementById('f-prix-unit')?.value) || 0;  // ← Étape D+
-  const user     = document.getElementById('f-user')?.value || ST.profile?.name || 'Système';
+  const user     = ST.profile?.name  || 'Système';
+  const userId   = ST.user?.id       || null;
   const dest   = document.getElementById('f-dest')?.value || '';
   const empl   = document.getElementById('f-empl')?.value || '';
   const obs    = document.getElementById('f-obs')?.value  || '';
@@ -142,7 +143,7 @@ window.submitMvt = async (typeStr) => {
       valeur: qty * (typeStr === 'Entrée' ? prixUnit : prod.prix),  // ← Étape D+
       dept,
       user_name: user, 
-      user_id: ST.user?.id, 
+      user_id: userId, 
       destination: dest, 
       emplacement: empl,
       ref_document: refDoc, 
@@ -168,8 +169,7 @@ window.submitMvt = async (typeStr) => {
           showToast('Numéros de série en double détectés', 'err'); return;
         }
       }
-      // FIX : prixUnit transmis pour que chaque actif créé porte le bon prix d'entrée
-      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
+      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials);
       if (res.ok) {
         showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s) — ${res.first}${qty>1?' → '+res.last:''}`);
       } else {
@@ -323,9 +323,6 @@ function renderModal() {
     const iE=ST.modal.mvtType==='entree';
     title=iE?'↓ Enregistrer une Entrée':'↑ Enregistrer une Sortie';
     const prodOpts=prods.map(p=>`<option value="${p.id}" ${p.id===ST.modal.prodId?'selected':''}>${p.nom} (stock: ${p.stock}${p.emplacement?' — '+p.emplacement:''})</option>`).join('');
-    const myDeptUsers=ST.allProfiles.length>0
-      ? ST.allProfiles.filter(u=>u.dept===dept||u.dept==='both'||u.role==='Administrateur').map(u=>`<option value="${u.name}" ${u.name===ST.profile?.name?'selected':''}>${u.name} (${u.role})</option>`).join('')
-      : `<option value="${ST.profile?.name||''}" selected>${ST.profile?.name||''} (${curRole()})</option>`;
     body=`
       <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Département</label><input value="${dept}" disabled class="field-readonly" style="font-weight:700;color:${color}"></div>
@@ -335,15 +332,26 @@ function renderModal() {
         <select id="f-prod" onchange="onMvtFieldChange()">
           <option value="">— Sélectionner un produit ${dept} actif —</option>${prodOpts}
         </select></div>
-      <div class="form-3col">
+      <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Quantité <span class="req">*</span></label>
           <input id="f-qty" type="number" min="1" value="1" oninput="onMvtFieldChange()"></div>
         <div class="form-row">
           <label class="form-lbl">Prix unit. (MGA)${iE?'&nbsp;<span class="req">*</span>':''}</label>
           <input id="f-prix-unit" type="number" min="0" placeholder="0"
             ${!iE?'readonly class="field-readonly"':'oninput="this.dataset.userEdited=\'1\'"'}></div>
-        <div class="form-row"><label class="form-lbl">Agent <span class="req">*</span></label>
-          <select id="f-user">${myDeptUsers}</select></div>
+      </div>
+      <div class="form-row">
+        <label class="form-lbl">Opération réalisée par</label>
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:8px">
+          <div style="width:28px;height:28px;border-radius:50%;background:${ST.profile?.color||'var(--teal)'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
+            ${(ST.profile?.name||'?').charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--teal-d)">${ST.profile?.name||'—'}</div>
+            <div style="font-size:10px;color:var(--text3)">${curRole()} · Session active</div>
+          </div>
+          <i class="ti ti-lock" style="margin-left:auto;color:var(--text3);font-size:14px" title="Auteur verrouillé sur le compte connecté"></i>
+        </div>
       </div>
       ${iE
         ? `<div class="form-2col">
