@@ -44,11 +44,17 @@ function generateNomenclature(produitId, year, seq) {
 }
 
 // ─── Création automatique d'actifs à l'entrée de stock ────────
-// FIX : la fonction renvoie désormais { ok, message, ids } pour que l'appelant
+// FIX : la fonction renvoie { ok, message, first, last } pour que l'appelant
 // (submitMvt) sache si la création a réellement réussi ET puisse afficher
 // le message d'erreur Supabase réel dans un seul toast — au lieu d'un toast
 // de succès factice, ou de deux toasts qui s'écrasaient l'un l'autre.
-// prixUnit : prix de l'entrée en cours — prioritaire sur prod.valeur_achat (fix bug prix actifs)
+// prixUnit : prix unitaire de l'ENTRÉE EN COURS.
+// FIX (corrections finales — pt.3) : ce paramètre existait déjà dans la signature
+// mais n'était JAMAIS transmis par submitMvt() (stock.js) → il valait donc toujours
+// `null` ici, et le repli silencieux sur prod.valeur_achat (champ catalogue souvent
+// jamais configuré, donc à 0) produisait des actifs avec un prix unitaire vide.
+// submitMvt() transmet désormais bien prixUnit (cf. stock.js → submitMvt), et ce
+// prix est utilisé ci-dessous SANS repli sur le catalogue.
 window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = [], prixUnit = null) => {
   try {
     // Préfixe de nomenclature pour ce produit (dept + catégorie) — réutilisé
@@ -87,10 +93,20 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = 
         dept:                prod.dept,
         emplacement:         emplacement || prod.emplacement || '',
         date_entree:         now,
-        // FIX : utilise le prix de l'entrée en cours s'il est fourni,
-        // sinon repli sur la valeur_achat du produit catalogue.
-        valeur_achat:        (prixUnit !== null && prixUnit > 0) ? prixUnit : (prod.valeur_achat || 0),
-        date_achat:          prod.date_achat           || null,
+        // FIX (corrections finales — pt.3) : valeur_achat = TOUJOURS le prix unitaire
+        // de cette entrée précise (prixUnit), jamais celui du produit catalogue. Un
+        // même produit peut être réceptionné à des prix différents au fil du temps ;
+        // chaque actif individuel doit conserver SON propre prix d'acquisition. Le
+        // repli sur prod.valeur_achat est supprimé (c'était la source du bug : ce
+        // champ catalogue est rarement configuré et valait souvent 0). submitMvt()
+        // bloque désormais toute entrée sans prix pour un produit amortissable, donc
+        // ce cas ne devrait plus survenir en usage normal ; 0 reste un repli défensif.
+        valeur_achat:        (prixUnit !== null && prixUnit > 0) ? prixUnit : 0,
+        // FIX (corrections finales — pt.3) : date_achat = date réelle de CETTE entrée
+        // (même valeur que date_entree, tronquée à la date), et non plus la date_achat
+        // générique du produit catalogue. Chaque actif amortit donc à partir de sa
+        // propre date d'acquisition réelle.
+        date_achat:          now.slice(0, 10),
         duree_amortissement: prod.duree_amortissement  || 36,
         statut:              'En service',
         mouvement_entree_id: mvtId,
@@ -272,8 +288,11 @@ function renderActifs(dept) {
     filteredCount: filtered.length,
   });
 
-  // En-têtes dynamiques selon droits
-  const hdrs = ['Numéro de série', 'Produit', 'Catégorie', 'Emplacement', 'Date entrée'];
+  // FIX (corrections finales — pt.2) : "Produit" est désormais affiché avant
+  // "Numéro de série" (ordre de lecture plus naturel : on identifie d'abord le
+  // type de matériel, puis son numéro de série précis). Même ordre appliqué aux
+  // deux départements puisque renderActifs() est une fonction partagée IT/Finance.
+  const hdrs = ['Produit', 'Numéro de série', 'Catégorie', 'Emplacement', 'Date entrée'];
   if (canSeePrix()) hdrs.push('Valeur achat');
   hdrs.push('Durée');
   if (canSeePrix()) hdrs.push('VNC · Avanc.');
@@ -297,9 +316,11 @@ function renderActifs(dept) {
         </div>`
       : '';
 
+    // FIX (corrections finales — pt.2) : cellule "Produit" déplacée avant la
+    // cellule "Numéro de série", conformément au nouvel ordre des en-têtes ci-dessus.
     return `<tr${a.statut === 'Réformé' ? ' class="row-inactif"' : ''}>
-      <td><code class="actif-id">${highlight(a.id, q)}</code></td>
       <td style="font-weight:600;font-size:12.5px">${highlight(a.produit_nom, q)}</td>
+      <td><code class="actif-id">${highlight(a.id, q)}</code></td>
       <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(a.categorie, q)}</span></td>
       <td>${a.emplacement
         ? `<span class="tag" style="color:#1e40af;background:#dbeafe;font-size:9.5px">${highlight(a.emplacement, q)}</span>`
@@ -356,8 +377,10 @@ window.exportActifsCSV = (dept) => {
   const all   = ST.actifs.filter(a => a.dept === dept);
   const showP = canSeePrix();
 
+  // FIX (corrections finales — pt.2) : ordre des colonnes aligné sur le tableau
+  // à l'écran (Produit avant Numéro de série).
   const headers = [
-    'Numéro de série', 'Produit', 'Catégorie', 'Emplacement',
+    'Produit', 'Numéro de série', 'Catégorie', 'Emplacement',
     'Statut', 'Date entrée', 'Mouvement entrée',
   ];
   if (showP) headers.push('Valeur achat (MGA)', 'Date achat', 'Durée amort. (mois)', 'VNC (MGA)', '% Amorti');
@@ -366,7 +389,7 @@ window.exportActifsCSV = (dept) => {
     const vnc = calcVNC(a);
     const pct = amortPct(a);
     const row = [
-      a.id, a.produit_nom, a.categorie, a.emplacement || '',
+      a.produit_nom, a.id, a.categorie, a.emplacement || '',
       a.statut, fmtDT(a.date_entree), a.mouvement_entree_id || '',
     ];
     if (showP) row.push(

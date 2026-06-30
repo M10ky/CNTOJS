@@ -66,6 +66,11 @@ window.exportProduitsCSV = (dept) => {
   const prods    = applyInlineFilters(baseProd, 'produit');
   const showP    = canSeePrix();
 
+  // FIX (corrections finales — pt.1) : 'VNC (MGA)' et '% Amorti' retirés de l'export
+  // Inventaire — cohérent avec la suppression de la colonne VNC dans prodTable
+  // (stock.js). 'Valeur achat (MGA)' / 'Date achat' / 'Durée amort. (mois)' restent :
+  // ce sont des données de configuration catalogue toujours éditables depuis la
+  // fiche produit (✏), simplement plus utilisées ici pour calculer une VNC produit.
   const headers = [
     'ID', 'Produit', 'Catégorie', 'Département', 'Emplacement',
     'Stock', 'Seuil critique', 'Statut'
@@ -74,13 +79,11 @@ window.exportProduitsCSV = (dept) => {
     headers.push(
       'Valeur cumulée entrées (MGA)',  // ← Étape D+
       'Valeur achat (MGA)', 'Date achat',
-      'Durée amort. (mois)', 'VNC (MGA)', '% Amorti'
+      'Durée amort. (mois)'
     );
   }
 
   const rows = prods.map(p => {
-    const vnc = calcVNC(p);
-    const pct = amortPct(p);
     const row = [
       p.id, p.nom, p.categorie, p.dept,
       p.emplacement || '', p.stock, p.seuil, getStatus(p)
@@ -90,9 +93,7 @@ window.exportProduitsCSV = (dept) => {
         getValeurTotaleProduit(p.id),  // ← Étape D+
         p.valeur_achat || 0,
         p.date_achat   || '',
-        p.duree_amortissement || '',
-        vnc !== null ? vnc : '',
-        pct !== null ? pct + '%' : ''
+        p.duree_amortissement || ''
       );
     }
     return row;

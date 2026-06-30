@@ -121,6 +121,13 @@ window.submitMvt = async (typeStr) => {
   }
   if (typeStr==='Sortie'&&prod.stock<qty) { showToast(`Stock insuffisant (${prod.stock} disponible)`,'err'); return; }
   if (typeStr==='Sortie'&&!dest) { showToast('Veuillez indiquer la destination','err'); return; }
+  // FIX (corrections finales — pt.3) : un produit à suivi individuel amortissable doit
+  // toujours recevoir un prix unitaire valide à l'entrée. Sans ce garde-fou, les actifs
+  // créés par createActifUnits() hériteraient d'une valeur_achat à 0 et leur VNC ne
+  // serait jamais calculable (c'est exactement la cause du bug "prix unitaire vide").
+  if (typeStr==='Entrée' && prod.is_amortissable===true && prixUnit<=0) {
+    showToast(`Prix unitaire requis pour "${prod.nom}" (suivi individuel amortissable)`,'err'); return;
+  }
   const newStock = typeStr==='Entrée' ? prod.stock+qty : prod.stock-qty;
   const mvtId   = genId(dept==='IT'?'MVT-IT':'MVT-FIN');
   const tsNow   = nowISO();
@@ -169,7 +176,11 @@ window.submitMvt = async (typeStr) => {
           showToast('Numéros de série en double détectés', 'err'); return;
         }
       }
-      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials);
+      // FIX (corrections finales — pt.3) : prixUnit est désormais transmis tel quel —
+      // il manquait jusqu'ici dans cet appel (seul le défaut `null` du paramètre était
+      // utilisé), ce qui forçait systématiquement le repli sur prod.valeur_achat dans
+      // createActifUnits (cf. actifs.js pour la suite de la correction).
+      const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
       if (res.ok) {
         showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s) — ${res.first}${qty>1?' → '+res.last:''}`);
       } else {
@@ -559,8 +570,13 @@ function prodTable(prods, dept, color) {
     count: prods.length, filteredCount: allFiltered.length,
   });
 
+  // FIX (corrections finales — pt.1) : colonne VNC supprimée de l'Inventaire — un
+  // même produit catalogue peut avoir été acheté à des prix différents au fil des
+  // entrées successives, donc une VNC unique basée sur un seul valeur_achat/date_achat
+  // "produit" n'a plus de sens ici. La VNC par actif individuel reste disponible et
+  // pertinente dans l'onglet Actifs (actifs.js → renderActifs).
   const hdrs=['ID','Produit','Catégorie','Emplacement','Stock','Seuil'];
-  if (showP) hdrs.push('Valeur Cumulée Entrées','VNC');  // ← Étape D+
+  if (showP) hdrs.push('Valeur Cumulée Entrées');
   hdrs.push('Statut');
   if (canM) hdrs.push('Actions');
 
@@ -568,11 +584,6 @@ const rows = allFiltered.map(p => {
   const pActif = isActif(p);
   const st = getStatus(p);
   const sc = st === 'Rupture' ? '#dc2626' : st === 'Critique' ? '#d97706' : 'var(--text)';
-  const vnc = calcVNC(p);
-  const pct = amortPct(p);
-  const vncCell = vnc !== null 
-    ? `<div style="font-weight:700;font-size:12px">${fmt(vnc)} MGA</div><div class="amort-bar"><div class="amort-fill" style="width:${pct}%;background:${amortColor(pct)}"></div></div><div style="font-size:9px;color:${amortColor(pct)};margin-top:1px">${pct}% amorti</div>`
-    : '<span style="color:var(--text3);font-size:11px">Non configuré</span>';
 
   let html = `<tr${pActif ? '' : ' class="row-inactif"'}>
     <td><code style="font-size:9px">${highlight(p.id, q)}</code></td>
@@ -584,8 +595,7 @@ const rows = allFiltered.map(p => {
 
   if (showP) {
     const vCumul = getValeurTotaleProduit(p.id);  // ← Étape D+
-    html += `<td style="font-weight:700">${fmt(vCumul)} MGA</td>
-             <td>${vncCell}</td>`;
+    html += `<td style="font-weight:700">${fmt(vCumul)} MGA</td>`;
   }
 
   // === COLONNE STATUT + ACTIF (corrigée) ===
