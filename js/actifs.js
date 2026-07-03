@@ -322,10 +322,11 @@ function renderActifs(dept) {
           ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.REFORME)
             ? btn('✕ Réformer','#ef4444',true, `reformerActif('${a.id}')`)
             : (a.statut === 'Réformé' || a.statut === 'Sorti'
-                ? `<span class="tag ${a.statut==='Sorti'?'actif-so':'actif-rf'}" style="font-size:9.5px">${a.statut}</span>`
+                ? `<span class="tag ${a.statut==='Sorti'?'actif-sorti':'actif-rf'}" style="font-size:9.5px">${a.statut}</span>`
                 : '')}
+          ${btn('🕘', '#6366f1', true, `openActifHistorique('${a.id}')`, '')}
         </div>`
-      : '';
+      : `${btn('🕘 Historique', '#6366f1', true, `openActifHistorique('${a.id}')`)}`;
 
     // FIX (corrections finales — pt.2) : cellule "Produit" déplacée avant la
     // cellule "Numéro de série", conformément au nouvel ordre des en-têtes ci-dessus.
@@ -414,4 +415,43 @@ window.exportActifsCSV = (dept) => {
   });
 
   exportToCSV(rows, headers, `actifs_${dept.toLowerCase()}_${todayFileDate()}.csv`);
+};
+// ─── Historique d'un actif individuel (modal read-only) ────────
+window.openActifHistorique = (actifId) => {
+  document.getElementById('modal-el')?.remove();
+  const a = (ST.actifs || []).find(x => x.id === actifId);
+  const hist = getHistoriqueActif(actifId);
+
+  const rows = hist.length
+    ? hist.map(m => `<tr>
+        <td>${fmtDTSplit(m.created_at || m.date)}</td>
+        <td>${typeBadge(m.type)}</td>
+        <td style="font-weight:600">${m.qty}</td>
+        <td style="font-weight:700">${fmt(m.valeur)} MGA</td>
+        <td style="font-size:11px;color:var(--text2)">${m.destination || m.emplacement || '—'}</td>
+        <td style="font-size:11px;color:var(--text3)">${m.user_name || '—'}</td>
+      </tr>`).join('')
+    : `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Aucun mouvement enregistré pour cet actif</td></tr>`;
+
+  const ov = document.createElement('div');
+  ov.id = 'modal-el';
+  ov.className = 'overlay';
+  ov.innerHTML = `<div class="modal modal-wide" onclick="event.stopPropagation()">
+    <div class="modal-h">
+      <span class="modal-ttl">🕘 Historique — <code class="actif-id">${actifId}</code></span>
+      <button class="close-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
+      ${a?.produit_nom || '—'} · Statut actuel : ${actifStatutBadge(a?.statut || '—')}
+    </div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr>${['Date & Heure','Type','Qté','Valeur','Empl./Dest.','Agent'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      ${btn('Fermer','#94a3b8',true,'closeModal()')}
+    </div>
+  </div>`;
+  ov.addEventListener('click', closeModal);
+  document.body.appendChild(ov);
 };

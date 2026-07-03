@@ -111,7 +111,7 @@ window.exportMouvementsCSV = (dept) => {
   const mvt    = applyInlineFilters(allMvt, 'mouvement');
 
   const headers = [
-    'ID', 'Date & Heure', 'Type', 'Produit', 'Quantité',
+    'ID', 'Date & Heure', 'Type', 'Produit', 'N° Actif (CNTO)', 'Quantité',
     'Prix unitaire (MGA)', 'Valeur totale (MGA)', 'Emplacement', 'Destination',  // ← Étape D+
     'Fournisseur', 'Réf. Document', 'Agent', 'Observation'
   ];
@@ -120,6 +120,7 @@ window.exportMouvementsCSV = (dept) => {
     fmtDT(m.created_at || m.date),
     m.type,
     m.produit_nom,
+    m.actif_id || '',                                     // ← traçabilité individuelle
     m.qty,
     m.qty > 0 ? Math.round((m.valeur || 0) / m.qty) : 0,  // ← Prix unitaire calculé
     m.valeur  || 0,

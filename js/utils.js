@@ -42,6 +42,8 @@ const ST = {
   searchDebounce: null,
   searchSelectedIdx: -1,
   searchResults: [],
+  searchResults: [],
+  isSubmitting: false,   // ← Anti-double-clic global (soumissions Mouvements/Prêts/etc.)
 };
 
 // ═══ HELPERS & FORMATTERS ═══
@@ -155,7 +157,36 @@ const urgBadge  = u => {
 
 const btn = (lbl,color,outline,onclick,icon='') =>
   `<button class="btn ${outline?'btn-outline':'btn-solid'}" style="border-color:${color};${outline?`color:${color}`:`background:${color}`}" onclick="${onclick}">${icon?`<i class="ti ${icon}"></i>`:''} ${lbl}</button>`;
-
+// ═══ ANTI-DOUBLE-CLIC (soumissions réseau) ═══
+// withSubmitLock : verrouille ST.isSubmitting, désactive le(s) bouton(s) passé(s)
+// avec un spinner, exécute fn(), puis déverrouille systématiquement (finally).
+async function withSubmitLock(btnSelector, fn) {
+  if (ST.isSubmitting) { showToast('Une opération est déjà en cours…', 'err'); return; }
+  ST.isSubmitting = true;
+  const btns = btnSelector ? Array.from(document.querySelectorAll(btnSelector)) : [];
+  const originalHtml = btns.map(b => b.innerHTML);
+  btns.forEach(b => {
+    b.disabled = true;
+    b.style.opacity = '.65';
+    b.style.cursor = 'not-allowed';
+    b.innerHTML = `<span class="btn-spinner" style="width:12px;height:12px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;display:inline-block;animation:spin .7s linear infinite"></span> En cours…`;
+  });
+  try {
+    await fn();
+  } finally {
+    ST.isSubmitting = false;
+    btns.forEach((b, i) => {
+      // Le modal peut avoir été fermé/redessiné entre-temps ; on protège l'accès.
+      if (document.body.contains(b)) {
+        b.disabled = false;
+        b.style.opacity = '';
+        b.style.cursor = '';
+        b.innerHTML = originalHtml[i];
+      }
+    });
+  }
+}
+window.withSubmitLock = withSubmitLock;
 const accessDenied = () => `<div class="access-denied"><div class="icon"><i class="ti ti-lock"></i></div><div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Accès restreint</div><div style="font-size:12px">Vous n'avez pas les droits nécessaires pour cette section.</div></div>`;
 
 // ═══ AMORTISSEMENT ═══
@@ -411,7 +442,7 @@ function applyInlineFilters(items, type = 'produit') {
       if (il.actif === 'true'  && item.actif === false) return false;
       if (il.actif === 'false' && item.actif !== false) return false;
     } else if (type === 'mouvement') {
-      if (q && !matchesQuery([item.produit_nom, item.user_name, item.destination, item.fournisseur, item.ref_document, item.id, item.emplacement], q)) return false;
+      if (q && !matchesQuery([item.produit_nom, item.user_name, item.destination, item.fournisseur, item.ref_document, item.id, item.emplacement, item.actif_id], q)) return false;
       if (il.dept && item.dept !== il.dept) return false;
       if (il.type && item.type !== il.type) return false;
     } else if (type === 'demande') {
