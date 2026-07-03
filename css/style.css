@@ -585,7 +585,7 @@ tr.row-inactif td {
 .actif-pr  { color: #1d4ed8; background: #dbeafe }
 .actif-hs  { color: #d97706; background: #fef3c7 }
 .actif-rf  { color: #94a3b8; background: #f1f5f9 }
-
+.actif-sorti { color: #b45309; background: #fef3c7 }
 .actif-id {
   font-family: var(--mono);
   font-size: 10.5px;

@@ -42,7 +42,11 @@ function generateNomenclature(produitId, year, seq) {
 
   return `CNTO-${cleanId}-${yy}-${String(seq).padStart(4, '0')}`;
 }
-
+window.getHistoriqueActif = (actifId) => {
+  return (ST.mouvements || [])
+    .filter(m => m.actif_id === actifId)
+    .sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+};
 // ─── Création automatique d'actifs à l'entrée de stock ────────
 // FIX : la fonction renvoie { ok, message, first, last } pour que l'appelant
 // (submitMvt) sache si la création a réellement réussi ET puisse afficher
@@ -212,6 +216,7 @@ function actifStatutBadge(statut) {
   if (statut === 'En prêt')      return `<span class="tag actif-pr">⇄ En prêt</span>`;
   if (statut === 'Hors service') return `<span class="tag actif-hs">⚠ Hors service</span>`;
   if (statut === 'Réformé')      return `<span class="tag actif-rf">✕ Réformé</span>`;
+  if (statut === 'Sorti')        return `<span class="tag actif-sorti">↗ Sorti</span>`;
   return `<span class="tag">${statut || '—'}</span>`;
 }
 
@@ -237,6 +242,7 @@ function renderActifs(dept) {
   const nbSv = all.filter(a => a.statut === 'En service').length;
   const nbPr = all.filter(a => a.statut === 'En prêt').length;
   const nbHs = all.filter(a => a.statut === 'Hors service').length;
+  const nbSo = all.filter(a => a.statut === 'Sorti').length;      // ← NOUVEAU
   const nbRf = all.filter(a => a.statut === 'Réformé').length;
   const vncTotale = all
     .filter(a => a.statut === 'En service' || a.statut === 'En prêt')
@@ -249,7 +255,8 @@ function renderActifs(dept) {
     { lbl: 'En service',    val: nbSv, s: 'actifs opérationnels', c: '#10b981' },
     { lbl: 'En prêt',       val: nbPr, s: 'actifs sortis',        c: '#3b82f6' },
     { lbl: 'Hors service',  val: nbHs, s: 'à vérifier/réparer',   c: '#f59e0b' },
-    { lbl: 'Réformés',      val: nbRf, s: 'fin de vie',           c: '#ef4444' },
+    { lbl: 'Sortis',        val: nbSo, s: 'sortis du stock',      c: '#dc2626' }, // ← NOUVEAU
+    { lbl: 'Réformés',      val: nbRf, s: 'fin de vie',           c: '#94a3b8' },
   ];
   if (canSeePrix() && all.length) {
     kpis.push({
@@ -310,9 +317,13 @@ function renderActifs(dept) {
 
     const actions = canM
       ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
-          ${a.statut === 'En service'   ? btn('⚠ HS',     '#f59e0b', true, `horsServiceActif('${a.id}')`) : ''}
-          ${a.statut === 'Hors service' ? btn('↩ Activer','#10b981', true, `reactiverActif('${a.id}')`)   : ''}
-          ${a.statut !== 'Réformé'      ? btn('✕ Réformer','#ef4444',true, `reformerActif('${a.id}')`)    : '<span class="tag actif-rf" style="font-size:9.5px">Réformé</span>'}
+          ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.HORS_SERVICE) ? btn('⚠ HS',      '#f59e0b', true, `horsServiceActif('${a.id}')`) : ''}
+          ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.EN_SERVICE)   ? btn('↩ Activer', '#10b981', true, `reactiverActif('${a.id}')`)   : ''}
+          ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.REFORME)
+            ? btn('✕ Réformer','#ef4444',true, `reformerActif('${a.id}')`)
+            : (a.statut === 'Réformé' || a.statut === 'Sorti'
+                ? `<span class="tag ${a.statut==='Sorti'?'actif-so':'actif-rf'}" style="font-size:9.5px">${a.statut}</span>`
+                : '')}
         </div>`
       : '';
 
