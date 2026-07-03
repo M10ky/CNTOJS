@@ -629,9 +629,29 @@ window.onMvtFieldChange = async () => {
     prixInp.value = prod.prix || 0;
   }
 
+  // ─── Sortie : sélecteur multi-actifs (indépendant de la section série) ───
+  // FIX : ce bloc doit s'exécuter AVANT le "return" lié à f-serials-section,
+  // sinon il n'est jamais atteint en mode Sortie (cet élément n'existe que
+  // dans le HTML de l'Entrée → serlSec est null → return prématuré).
+  if (!iE) {
+    const wrap  = document.getElementById('f-actif-sortie-wrap');
+    const qWrap = document.getElementById('f-qty-wrap');
+    if (wrap && qWrap) {
+      if (prod?.is_amortissable) {
+        qWrap.style.display = 'none';
+        document.getElementById('f-qty').value = 1; // valeur neutre, recalculée à la validation
+        wrap.innerHTML = renderActifSortieSelector(prod);
+      } else {
+        qWrap.style.display = '';
+        wrap.innerHTML = '';
+      }
+    }
+    return; // rien d'autre à faire côté Sortie (pas de section numéros de série)
+  }
+
   // Section numéros de série : uniquement pour les entrées amortissables
   const serlSec = document.getElementById('f-serials-section');
-  if (!serlSec || !iE) return;
+  if (!serlSec) return;
 
   if (prod?.is_amortissable) {
     serlSec.style.display = '';
@@ -662,7 +682,6 @@ window.onMvtFieldChange = async () => {
   } else {
     serlSec.style.display = 'none';
   }
-  if (!iE) {
     const wrap  = document.getElementById('f-actif-sortie-wrap');
     const qWrap = document.getElementById('f-qty-wrap');
     if (wrap && qWrap) {
@@ -675,8 +694,7 @@ window.onMvtFieldChange = async () => {
         wrap.innerHTML = '';
       }
     }
-  }
-};
+  };
 // ═══ TABLE PRODUITS ═══
 function prodTable(prods, dept, color) {
   const il = ST.search.inline;
