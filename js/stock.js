@@ -99,87 +99,99 @@ window.toggleProductActif = async (id, currentlyActif) => {
 
 // ═══ CRUD MOUVEMENTS ═══
 window.submitMvt = async (typeStr) => {
-  const dept=ST.modal.dept;
-  if (dept==='IT'&&!canManIT()||dept==='Finance'&&!canManFin()) { showToast('Action non autorisée','err'); return; }
+  const dept = ST.modal.dept;
+  if (dept==='IT' && !canManIT() || dept==='Finance' && !canManFin()) {
+    showToast('Action non autorisée','err'); return;
+  }
+
   const prodId   = document.getElementById('f-prod')?.value;
-  const qty      = parseInt(document.getElementById('f-qty')?.value)||0;
-  const prixUnit = parseFloat(document.getElementById('f-prix-unit')?.value) || 0;  // ← Étape D+
-  const user     = ST.profile?.name  || 'Système';
-  const userId   = ST.user?.id       || null;
-  const dest   = document.getElementById('f-dest')?.value || '';
-  const empl   = document.getElementById('f-empl')?.value || '';
-  const obs    = document.getElementById('f-obs')?.value  || '';
-  const refDoc = document.getElementById('f-ref-doc')?.value || '';
+  const qty      = parseInt(document.getElementById('f-qty')?.value) || 0;
+  const prixUnit = parseFloat(document.getElementById('f-prix-unit')?.value) || 0;
+  const user     = ST.profile?.name || 'Système';
+  const userId   = ST.user?.id || null;
+  const dest     = document.getElementById('f-dest')?.value || '';
+  const empl     = document.getElementById('f-empl')?.value || '';
+  const obs      = document.getElementById('f-obs')?.value || '';
+  const refDoc   = document.getElementById('f-ref-doc')?.value || '';
   const fournisseur = document.getElementById('f-fournisseur')?.value || '';
+
   if (!prodId) { showToast('Sélectionnez un produit','err'); return; }
-  if (qty<=0)  { showToast('Quantité invalide','err'); return; }
-  const prod = ST.produits.find(p=>p.id===prodId);
+  if (qty <= 0) { showToast('Quantité invalide','err'); return; }
+
+  const prod = ST.produits.find(p => p.id === prodId);
   if (!prod) { showToast('Produit introuvable','err'); return; }
-  // ← ÉTAPE B : blocage si inactif
+
   if (!isActif(prod)) {
     showToast(`"${prod.nom}" est désactivé — réactivez-le d'abord`, 'err'); return;
   }
-// PAR :
-  if (typeStr==='Sortie'&&!dest) { showToast('Veuillez indiquer la destination','err'); return; }
 
-  // ─── Sortie amortissable : sélection multi-actifs obligatoire ───
+  // ─── Gestion des sorties amortissables ───
   let selectedActifIds = [];
   if (typeStr === 'Sortie' && prod.is_amortissable === true) {
-    selectedActifIds = Array.from(document.querySelectorAll('.f-actif-sortie-chk:checked')).map(el => el.value);
+    selectedActifIds = Array.from(document.querySelectorAll('.f-actif-sortie-chk:checked'))
+                           .map(el => el.value);
+
     if (!selectedActifIds.length) {
-      showToast('Sélectionnez au moins un matériel à sortir', 'err'); return;
+      showToast('Vous devez sélectionner au moins un matériel à sortir', 'err');
+      return;
     }
-    // Revalidation stricte : chaque actif doit toujours être "En service" au moment de valider
+
+    // Vérification de disponibilité en temps réel
     await loadActifs();
     for (const id of selectedActifIds) {
       const a = (ST.actifs || []).find(x => x.id === id);
       if (!a || a.statut !== STATUS_ACTIF.EN_SERVICE) {
-        showToast(`"${id}" n'est plus disponible (statut actuel : ${a?.statut || 'introuvable'})`, 'err');
+        showToast(`Le matériel ${id} n'est plus disponible (statut : ${a?.statut || 'inconnu'})`, 'err');
         return;
       }
     }
-  } else if (typeStr==='Sortie' && prod.stock<qty) {
-    showToast(`Stock insuffisant (${prod.stock} disponible)`,'err'); return;
+  } else if (typeStr === 'Sortie' && prod.stock < qty) {
+    showToast(`Stock insuffisant (${prod.stock} disponible)`, 'err'); return;
   }
 
   const effectiveQty = selectedActifIds.length > 0 ? selectedActifIds.length : qty;
-  const newStock = typeStr==='Entrée' ? prod.stock+qty : prod.stock-effectiveQty;
-  const mvtId   = genId(dept==='IT'?'MVT-IT':'MVT-FIN');
-  const tsNow   = nowISO();
-  try {
-    const updateData = { stock: newStock, updated_at: tsNow };
-    if (typeStr === 'Entrée' && empl)       updateData.emplacement = empl;
-    if (typeStr === 'Entrée' && prixUnit>0) updateData.prix = prixUnit; // ← mémorise dernier prix
 
-    const { error: sErr } = await db.from('produits').update(updateData).eq('id', prodId);
+  try {
+    const tsNow = nowISO();
+    const mvtId = genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN');
+
+    // 1. Mise à jour du stock du produit
+    const { error: sErr } = await db.from('produits')
+      .update({ 
+        stock: typeStr === 'Entrée' ? prod.stock + qty : prod.stock - effectiveQty, 
+        updated_at: tsNow 
+      })
+      .eq('id', prodId);
     if (sErr) throw sErr;
 
+    // 2. Insertion du mouvement principal
     const { error: mErr } = await db.from('mouvements').insert({
-      id: mvtId, 
-      date: todayStr(), 
-      created_at: tsNow, 
+      id: mvtId,
+      date: todayStr(),
+      created_at: tsNow,
       type: typeStr,
-      produit_id: prodId, 
-      produit_nom: prod.nom, 
-      qty, 
-      valeur: qty * (typeStr === 'Entrée' ? prixUnit : prod.prix),  // ← Étape D+
+      produit_id: prodId,
+      produit_nom: prod.nom,
+      qty: effectiveQty,
+      valeur: effectiveQty * (typeStr === 'Entrée' ? prixUnit : (prod.prix || 0)),
       dept,
-      user_name: user, 
-      user_id: userId, 
-      destination: dest, 
+      user_name: user,
+      user_id: userId,
+      destination: dest,
       emplacement: empl,
-      ref_document: refDoc, 
+      ref_document: refDoc,
       fournisseur,
+      observation: obs
     });
     if (mErr) throw mErr;
-// REMPLACER l'insert mouvement (bloc db.from('mouvements').insert({...})) qty:qty par qty:effectiveQty,
-// et ajouter juste après le `if (mErr) throw mErr;` de ce même insert :
 
-    // ─── Sortie amortissable : un mouvement + une mise à jour de statut par actif ───
+    // 3. Traitement spécifique Sortie Amortissable
     if (typeStr === 'Sortie' && selectedActifIds.length > 0) {
       for (const actifId of selectedActifIds) {
         const actif = ST.actifs.find(a => a.id === actifId);
-        const { error: mvtActifErr } = await db.from('mouvements').insert({
+
+        // Mouvement détaillé par actif
+        await db.from('mouvements').insert({
           id: genId(dept==='IT'?'MVT-IT':'MVT-FIN'),
           date: todayStr(),
           created_at: nowISO(),
@@ -195,56 +207,61 @@ window.submitMvt = async (typeStr) => {
           destination: dest,
           emplacement: empl,
           ref_document: refDoc,
-          fournisseur,
-          observation: obs,
+          observation: obs
         });
-        if (mvtActifErr) throw mvtActifErr;
 
-        const { error: actifUpdErr } = await db.from('actifs_individuels')
-          .update({ statut: STATUS_ACTIF.SORTI })
+        // Mise à jour du statut de l'actif
+        await db.from('actifs_individuels')
+          .update({ 
+            statut: STATUS_ACTIF.SORTI, 
+            updated_at: nowISO() 
+          })
           .eq('id', actifId);
-        if (actifUpdErr) throw actifUpdErr;
       }
     }
-    // ═══ ÉTAPE C : Création automatique des actifs individuels ═══
-    // FIX : createActifUnits() renvoie { ok, first, last } ou { ok:false, message }.
-    // Un seul toast est affiché ici, avec le message d'erreur Supabase réel en
-    // cas d'échec — fini les toasts qui s'écrasaient et masquaient la vraie cause.
+
+    // 4. Entrée Amortissable → Création des actifs individuels
     if (typeStr === 'Entrée' && prod.is_amortissable === true) {
-      // ← Étape D+ : numéros de série manuels depuis le formulaire
       const ta = document.getElementById('f-serials');
       let manualSerials = [];
+
       if (ta && ta.value.trim()) {
         manualSerials = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+
         if (manualSerials.length > 0 && manualSerials.length !== qty) {
           showToast(`${qty} numéro(s) de série requis — ${manualSerials.length} saisi(s)`, 'err');
           return;
         }
         if (new Set(manualSerials).size !== manualSerials.length) {
-          showToast('Numéros de série en double détectés', 'err'); return;
+          showToast('Numéros de série en double détectés', 'err');
+          return;
         }
       }
-      // FIX (corrections finales — pt.3) : prixUnit est désormais transmis tel quel —
-      // il manquait jusqu'ici dans cet appel (seul le défaut `null` du paramètre était
-      // utilisé), ce qui forçait systématiquement le repli sur prod.valeur_achat dans
-      // createActifUnits (cf. actifs.js pour la suite de la correction).
+
       const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
+
       if (res.ok) {
-        showToast(`Entrée enregistrée + ${qty} actif(s) individuel(s) créé(s) — ${res.first}${qty>1?' → '+res.last:''}`);
+        showToast(`Entrée enregistrée + ${qty} actif(s) créé(s) ${res.first ? `— ${res.first}${qty > 1 ? ' → ' + res.last : ''}` : ''}`);
       } else {
-        showToast(`Entrée enregistrée, mais échec création actifs : ${res.message}`, 'err');
+        showToast(`Entrée enregistrée, mais échec création des actifs : ${res.message || 'Erreur inconnue'}`, 'err');
       }
-    } else if (typeStr === 'Sortie' && selectedActifIds.length > 0) {
-      showToast(`Sortie enregistrée — ${selectedActifIds.join(', ')}`);
-    } else {
-      showToast(`${typeStr} enregistrée — ${qty}× ${prod.nom}`);
+    } 
+    // Toast Sortie amortissable
+    else if (typeStr === 'Sortie' && selectedActifIds.length > 0) {
+      showToast(`Sortie enregistrée avec succès — ${selectedActifIds.length} matériel(s)`);
+    } 
+    // Toast par défaut
+    else {
+      showToast(`${typeStr} enregistrée — ${effectiveQty}× ${prod.nom}`);
     }
 
     closeModal();
     await Promise.all([loadProduits(), loadMouvements(), loadMouvementsEntrees(), loadActifs()]);
     render();
-  } catch(err) { 
-    showToast('Erreur: '+err.message, 'err'); 
+
+  } catch (err) {
+    console.error(err);
+    showToast('Erreur lors de l’enregistrement : ' + err.message, 'err');
   }
 };
 
@@ -405,39 +422,6 @@ window.updateActifSortieCount = () => {
   const el = document.getElementById('f-actif-sortie-count');
   if (el) el.textContent = n;
 };
-
-// ─── Sortie amortissable : rendu du sélecteur multi-actifs ────
-function renderActifSortieSelector(prod, q='') {
-  const dispo = (ST.actifs || []).filter(a =>
-    a.produit_id === prod.id && a.statut === STATUS_ACTIF.EN_SERVICE
-  );
-  if (!dispo.length) {
-    return `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
-      <i class="ti ti-alert-triangle"></i>
-      <div>Aucun matériel « En service » disponible pour ce produit.</div>
-    </div>`;
-  }
-  const rows = dispo.map(a => `
-    <tr>
-      <td><input type="checkbox" class="f-actif-sortie-chk" value="${a.id}" onchange="updateActifSortieCount()"></td>
-      <td><code class="actif-id">${a.id}</code></td>
-      <td style="font-size:11px">${a.categorie || '—'}</td>
-      <td style="font-size:11px">${a.emplacement || '—'}</td>
-    </tr>`).join('');
-  return `
-    <div class="form-row">
-      <label class="form-lbl">Matériels à sortir <span class="req">*</span></label>
-      <div style="max-height:220px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px">
-        <table style="width:100%">
-          <thead><tr><th style="width:30px"></th><th>N° Inventaire / Série</th><th>Catégorie</th><th>Emplacement</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-      <div style="margin-top:6px;font-size:11.5px;color:var(--text2)">
-        <strong id="f-actif-sortie-count">0</strong> matériel(s) sélectionné(s)
-      </div>
-    </div>`;
-}
 
 window.updateActifSortieCount = () => {
   const n = document.querySelectorAll('.f-actif-sortie-chk:checked').length;
