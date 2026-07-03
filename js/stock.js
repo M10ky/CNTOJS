@@ -405,6 +405,45 @@ window.updateActifSortieCount = () => {
   const el = document.getElementById('f-actif-sortie-count');
   if (el) el.textContent = n;
 };
+
+// ─── Sortie amortissable : rendu du sélecteur multi-actifs ────
+function renderActifSortieSelector(prod, q='') {
+  const dispo = (ST.actifs || []).filter(a =>
+    a.produit_id === prod.id && a.statut === STATUS_ACTIF.EN_SERVICE
+  );
+  if (!dispo.length) {
+    return `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
+      <i class="ti ti-alert-triangle"></i>
+      <div>Aucun matériel « En service » disponible pour ce produit.</div>
+    </div>`;
+  }
+  const rows = dispo.map(a => `
+    <tr>
+      <td><input type="checkbox" class="f-actif-sortie-chk" value="${a.id}" onchange="updateActifSortieCount()"></td>
+      <td><code class="actif-id">${a.id}</code></td>
+      <td style="font-size:11px">${a.categorie || '—'}</td>
+      <td style="font-size:11px">${a.emplacement || '—'}</td>
+    </tr>`).join('');
+  return `
+    <div class="form-row">
+      <label class="form-lbl">Matériels à sortir <span class="req">*</span></label>
+      <div style="max-height:220px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px">
+        <table style="width:100%">
+          <thead><tr><th style="width:30px"></th><th>N° Inventaire / Série</th><th>Catégorie</th><th>Emplacement</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:6px;font-size:11.5px;color:var(--text2)">
+        <strong id="f-actif-sortie-count">0</strong> matériel(s) sélectionné(s)
+      </div>
+    </div>`;
+}
+
+window.updateActifSortieCount = () => {
+  const n = document.querySelectorAll('.f-actif-sortie-chk:checked').length;
+  const el = document.getElementById('f-actif-sortie-count');
+  if (el) el.textContent = n;
+};
 // ═══ MODALES ═══
 function renderModal() {
   document.getElementById('modal-el')?.remove();
