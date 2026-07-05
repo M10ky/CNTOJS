@@ -296,7 +296,7 @@ function runSearch(query) {
       if (f==='fin' && p.dept!=='Finance') return false;
       if (p.dept==='IT'      && !canManIT())  return false;
       if (p.dept==='Finance' && !canManFin()) return false;
-      return matchesQuery([p.actif_id, p.emprunteur, p.produit_nom, p.statut, p.motif, p.id], q);
+      return matchesQuery([getActifNumero(p), p.emprunteur, p.produit_nom, p.statut, p.motif, p.id], q);
     });
     if (pretsList.length) {
       totalCount += pretsList.length;

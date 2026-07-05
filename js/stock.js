@@ -415,16 +415,23 @@ window.validDem = async (dept, id, action) => {
 
     if (prod.stock < dem.qty) { showToast(`Stock insuffisant : ${prod.stock} disponible, ${dem.qty} demandé`,'err'); return; }
 
+    // FIX (v4) : update stock + insert mouvement + update demande désormais
+    // atomiques via rpc_valider_demande_simple — un stock insuffisant détecté
+    // au moment du verrou empêche toute écriture partielle.
     await withSubmitLock(`[data-dem-id="${id}"] button`, async () => {
       try {
-        const tsNow=nowISO();
-        const { error:sErr } = await db.from('produits').update({stock:prod.stock-dem.qty,updated_at:tsNow}).eq('id',prod.id);
-        if (sErr) throw sErr;
-        const mvtId=genId(dept==='IT'?'MVT-IT':'MVT-FIN');
-        const { error:mErr } = await db.from('mouvements').insert({ id:mvtId, date:todayStr(), created_at:tsNow, type:'Sortie', produit_id:prod.id, produit_nom:prod.nom, qty:dem.qty, valeur:dem.qty*prod.prix, dept, user_name:ST.profile?.name||'Système', user_id:ST.user?.id, destination:dem.dest||'', demande_id:id, observation:`Validation demande ${id} — ${dem.demandeur}` });
-        if (mErr) throw mErr;
-        const { error:dErr } = await db.from('demandes').update({ statut:'Validé', valideur:ST.profile?.name||'', valideur_id:ST.user?.id, updated_at:nowISO() }).eq('id',id);
-        if (dErr) throw dErr;
+        const mvtId = genId(dept==='IT'?'MVT-IT':'MVT-FIN');
+        const { error } = await db.rpc('rpc_valider_demande_simple', {
+          p_dem_id:     id,
+          p_produit_id: prod.id,
+          p_qty:        dem.qty,
+          p_dept:       dept,
+          p_dest:       dem.dest || '',
+          p_mvt_id:     mvtId,
+          p_user_name:  ST.profile?.name || 'Système',
+          p_user_id:    ST.user?.id || null,
+        });
+        if (error) throw error;
         showToast('Demande validée — stock mis à jour');
         await Promise.all([loadDemandes(),loadProduits(),loadMouvements()]); render();
       } catch(err) { showToast('Erreur: '+err.message,'err'); }
@@ -553,50 +560,23 @@ window.submitDemAttribution = async () => {
 
   await withSubmitLock('#btn-submit-dem-attrib', async () => {
     try {
-      // Re-vérification anti-conflit (un autre agent a pu sortir/prêter l'actif
-      // entre l'ouverture du modal et la validation)
-      await loadActifs();
-      for (const aid of selectedIds) {
-        const a = (ST.actifs || []).find(x => x.id === aid);
-        if (!a || a.statut !== STATUS_ACTIF.EN_SERVICE) {
-          showToast(`Le matériel ${aid} n'est plus disponible (statut : ${a?.statut || 'inconnu'})`, 'err');
-          return;
-        }
-      }
+      // FIX (v4) : mouvements + actifs + stock + demande désormais atomiques
+      // via rpc_attribuer_demande — la vérification "optimiste" par loadActifs()
+      // est retirée (remplacée par le verrou FOR UPDATE côté SQL, qui ne peut
+      // pas être périmé entre la lecture et l'écriture).
+      const mvtIds = selectedIds.map(() => genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN'));
 
-      const tsNow = nowISO();
-      const mvtRows = selectedIds.map(actifId => {
-        const actif = ST.actifs.find(a => a.id === actifId);
-        return {
-          id: genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN'),
-          date: todayStr(),
-          created_at: nowISO(),
-          type: 'Sortie',
-          produit_id: prod.id,
-          produit_nom: prod.nom,
-          actif_id: actifId,
-          qty: 1,
-          valeur: actif?.valeur_achat || 0,
-          dept,
-          user_name: ST.profile?.name || 'Système',
-          user_id: ST.user?.id || null,
-          destination: dem.dest || '',
-          demande_id: dem.id,
-          observation: `Attribution demande ${dem.id} — ${dem.demandeur}`,
-        };
+      const { error } = await db.rpc('rpc_attribuer_demande', {
+        p_dem_id:     demId,
+        p_produit_id: prod.id,
+        p_actif_ids:  selectedIds,
+        p_dept:       dept,
+        p_dest:       dem.dest || '',
+        p_mvt_ids:    mvtIds,
+        p_user_name:  ST.profile?.name || 'Système',
+        p_user_id:    ST.user?.id || null,
       });
-
-      const { error: mErr } = await db.from('mouvements').insert(mvtRows);
-      if (mErr) throw mErr;
-
-      const { error: aErr } = await db.from('actifs_individuels').update({ statut: STATUS_ACTIF.SORTI }).in('id', selectedIds);
-      if (aErr) throw aErr;
-
-      const { error: sErr } = await db.from('produits').update({ stock: prod.stock - selectedIds.length, updated_at: tsNow }).eq('id', prod.id);
-      if (sErr) throw sErr;
-
-      const { error: dErr } = await db.from('demandes').update({ statut: 'Validé', valideur: ST.profile?.name || '', valideur_id: ST.user?.id, updated_at: nowISO() }).eq('id', demId);
-      if (dErr) throw dErr;
+      if (error) throw error;
 
       closeModal();
       showToast(`Demande validée — ${selectedIds.length} matériel(s) attribué(s)`);

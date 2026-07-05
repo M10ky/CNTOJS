@@ -246,6 +246,40 @@ window.reactiverActif = async (id) => {
   } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
 };
 
+// ─── Réintégration d'un actif Sorti (réversibilité — v3) ───────
+// Contrairement à reactiverActif() (Hors service → En service, qui ne touche
+// jamais le stock car une mise Hors service ne l'avait pas décrémenté),
+// la réintégration d'un actif Sorti DOIT réincrémenter le stock du produit
+// (la sortie l'avait décrémenté). D'où le passage par un RPC atomique dédié
+// plutôt qu'un simple update de statut.
+window.reintegrerActif = async (id) => {
+  const a = ST.actifs.find(x => x.id === id);
+  if (!a) return;
+  if (a.dept === 'IT' && !canManIT() || a.dept === 'Finance' && !canManFin()) {
+    showToast('Action non autorisée', 'err'); return;
+  }
+  showConfirm(
+    `Réintégrer "${id}" en service ?`,
+    `L'actif "${a.produit_nom}" redeviendra <strong>disponible</strong> (statut En service)
+     et le stock du produit sera réincrémenté de 1.`,
+    async () => {
+      try {
+        const { error } = await db.rpc('rpc_reintegrer_actif', {
+          p_actif_id:  id,
+          p_user_name: ST.profile?.name || 'Système',
+          p_user_id:   ST.user?.id || null,
+          p_obs:       '',
+        });
+        if (error) throw error;
+        showToast(`"${id}" réintégré — remis en service`);
+        await Promise.all([loadActifs(), loadProduits(), loadMouvements(), loadMouvementsEntrees()]);
+        render();
+      } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
+    },
+    '#10b981'
+  );
+};
+
 window.reformerActif = async (id) => {
   const a = ST.actifs.find(x => x.id === id);
   if (!a) return;
@@ -409,14 +443,18 @@ function renderActifs(dept) {
 
     const actions = canM
       ? `<div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${a.statut === STATUS_ACTIF.SORTI ? btn('↩ Réintégrer', '#10b981', true, `reintegrerActif('${a.id}')`) : ''}
           ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.HORS_SERVICE) ? btn('⚠ HS',      '#f59e0b', true, `horsServiceActif('${a.id}')`) : ''}
-          ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.EN_SERVICE)   ? btn('↩ Activer', '#10b981', true, `reactiverActif('${a.id}')`)   : ''}
+          ${a.statut !== STATUS_ACTIF.SORTI && isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.EN_SERVICE)
+            ? btn('↩ Activer', '#10b981', true, `reactiverActif('${a.id}')`)
+            : ''}
           ${isValidTransition(TRANSITIONS_ACTIF, a.statut, STATUS_ACTIF.REFORME)
             ? btn('✕ Réformer','#ef4444',true, `reformerActif('${a.id}')`)
-            : (a.statut === 'Réformé' || a.statut === 'Sorti'
-                ? `<span class="tag ${a.statut==='Sorti'?'actif-sorti':'actif-rf'}" style="font-size:9.5px">${a.statut}</span>`
+            : (a.statut === 'Réformé'
+                ? `<span class="tag actif-rf" style="font-size:9.5px">${a.statut}</span>`
                 : '')}
           ${(a.statut !== STATUS_ACTIF.REFORME && a.statut !== STATUS_ACTIF.SORTI) ? btn('📍', '#0ea5e9', true, `changerEmplacementActif('${a.id}')`, '') : ''}
+          ${btn('✏', '#64748b', true, `openEditActif('${a.id}')`, '')}
           ${btn('🕘', '#6366f1', true, `openActifHistorique('${a.id}')`, '')}
         </div>`
       : `${btn('🕘 Historique', '#6366f1', true, `openActifHistorique('${a.id}')`)}`;
@@ -509,6 +547,106 @@ window.exportActifsCSV = (dept) => {
 
   exportToCSV(rows, headers, `actifs_${dept.toLowerCase()}_${todayFileDate()}.csv`);
 };
+// ─── Édition individuelle d'un actif (point 4) ─────────────────
+// Mono-table (update actifs_individuels uniquement) : pas de risque
+// d'incohérence multi-table, donc pas de RPC nécessaire ici. Modifier un
+// actif n'affecte jamais les autres actifs du même produit — chaque ligne
+// est totalement indépendante (valeur_achat, fournisseur, etc. déjà stockés
+// par actif depuis la création via createActifUnits).
+window.openEditActif = (actifId) => {
+  const a = (ST.actifs || []).find(x => x.id === actifId);
+  if (!a) return;
+  if (a.dept === 'IT' && !canManIT() || a.dept === 'Finance' && !canManFin()) {
+    showToast('Action non autorisée', 'err'); return;
+  }
+  ST.modal = { type: 'editActif', actifId };
+  renderModalEditActif();
+};
+
+function renderModalEditActif() {
+  document.getElementById('modal-el')?.remove();
+  if (!ST.modal || ST.modal.type !== 'editActif') return;
+
+  const a = (ST.actifs || []).find(x => x.id === ST.modal.actifId);
+  if (!a) { closeModal(); return; }
+  const color = a.dept === 'IT' ? '#4f46e5' : '#10b981';
+
+  const body = `
+    <div class="form-row"><label class="form-lbl">Actif</label>
+      <input value="${a.produit_nom} — ${a.id}" disabled class="field-readonly" style="font-weight:700"></div>
+    <div class="form-2col">
+      <div class="form-row"><label class="form-lbl">Valeur d'achat (MGA)</label>
+        <input id="f-actif-valach" type="number" min="0" value="${a.valeur_achat || 0}"></div>
+      <div class="form-row"><label class="form-lbl">Date d'achat</label>
+        <input id="f-actif-dtach" type="date" value="${a.date_achat || ''}"></div>
+    </div>
+    <div class="form-2col">
+      <div class="form-row"><label class="form-lbl">Fournisseur</label>
+        <select id="f-actif-fourn">
+          <option value="">— Non renseigné —</option>
+          ${(ST.params.fournisseurs || []).map(f =>
+            `<option value="${escQ(f)}" ${a.fournisseur === f ? 'selected' : ''}>${f}</option>`
+          ).join('')}
+        </select></div>
+      <div class="form-row"><label class="form-lbl">Durée d'amortissement</label>
+        <select id="f-actif-duree">${[12,24,36,48,60,84].map(m =>
+          `<option value="${m}" ${(a.duree_amortissement||36)===m?'selected':''}>${m} mois — ${tauxLineaire(m)}%/an</option>`
+        ).join('')}</select></div>
+    </div>
+    <div class="form-row"><label class="form-lbl">Valeur résiduelle (MGA)</label>
+      <input id="f-actif-residuelle" type="number" min="0" value="${a.valeur_residuelle || 0}">
+      <div style="font-size:10.5px;color:var(--text3);margin-top:3px">
+        Valeur plancher — la VNC de cet actif ne descendra jamais sous ce montant, même totalement amorti.
+      </div>
+    </div>
+    <div class="info-banner" style="margin-top:10px;font-size:11.5px">
+      <i class="ti ti-info-circle"></i>
+      <div>Ces valeurs sont propres à <strong>cet actif uniquement</strong> — les autres unités du même
+      produit (achetées à des dates ou prix différents) ne sont pas affectées.</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+      ${btn('Annuler', '#94a3b8', true, 'closeModal()')}
+      ${btn('✓ Enregistrer', color, false, `submitEditActif('${a.id}')`)}
+    </div>`;
+
+  const ov = document.createElement('div');
+  ov.id = 'modal-el'; ov.className = 'overlay';
+  ov.innerHTML = `<div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-h"><span class="modal-ttl">✏️ Modifier l'actif — <code class="actif-id">${a.id}</code></span>
+      <button class="close-btn" onclick="closeModal()">✕</button></div>
+    ${body}</div>`;
+  ov.addEventListener('click', closeModal);
+  document.body.appendChild(ov);
+}
+
+window.submitEditActif = async (actifId) => {
+  const a = (ST.actifs || []).find(x => x.id === actifId);
+  if (!a) return;
+  const valAch     = parseFloat(document.getElementById('f-actif-valach')?.value) || 0;
+  const dtAch      = document.getElementById('f-actif-dtach')?.value || null;
+  const fournisseur= document.getElementById('f-actif-fourn')?.value || null;
+  const duree      = parseInt(document.getElementById('f-actif-duree')?.value) || 36;
+  const residuelle = parseFloat(document.getElementById('f-actif-residuelle')?.value) || 0;
+
+  if (residuelle > valAch) {
+    showToast('La valeur résiduelle ne peut pas dépasser la valeur d\'achat', 'err'); return;
+  }
+
+  try {
+    const { error } = await db.from('actifs_individuels').update({
+      valeur_achat:        valAch,
+      date_achat:          dtAch,
+      fournisseur,
+      duree_amortissement: duree,
+      valeur_residuelle:   residuelle,
+    }).eq('id', actifId);
+    if (error) throw error;
+    closeModal();
+    showToast(`Actif "${actifId}" mis à jour`);
+    await loadActifs(); render();
+  } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
+};
+
 // ─── Historique d'un actif individuel (modal read-only) ────────
 window.openActifHistorique = (actifId) => {
   document.getElementById('modal-el')?.remove();

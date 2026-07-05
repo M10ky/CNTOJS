@@ -127,7 +127,10 @@ function renderPrets(dept) {
     }
 
     let actionCell = '<span style="font-size:11px;color:var(--text3)">—</span>';
-    if (isValidTransition(TRANSITIONS_PRET, p.statut, STATUS_PRET.RETOURNE)) {
+    if (p.statut === STATUS_PRET.PERDU) {
+      // ← réversibilité v4 : un prêt Perdu peut redevenir Retourné (matériel retrouvé)
+      actionCell = btn('🔎 Retrouvé', '#10b981', true, `retrouverActifPret('${p.id}')`);
+    } else if (isValidTransition(TRANSITIONS_PRET, p.statut, STATUS_PRET.RETOURNE)) {
       actionCell = `<div style="display:flex;gap:4px;flex-wrap:wrap">
         ${btn('↩ Retour', '#10b981', true, `retournerPret('${p.id}')`)}
         ${btn('✕ Perdu',  '#7c3aed', true, `perdreActif('${p.id}')`)}
@@ -348,40 +351,26 @@ window.submitPret = async () => {
   }
 
   const emprunteurProfile = ST.allProfiles.find(u => u.name === emprunteur);
-  const id    = genId(dept === 'IT' ? 'PRT-IT' : 'PRT-FIN');
-  const tsNow = nowISO();
+  const id = genId(dept === 'IT' ? 'PRT-IT' : 'PRT-FIN');
 
+  // FIX (v4) : insert prêt + update actif désormais dans rpc_creer_pret — une
+  // seule transaction SQL. Avant, un échec du second update laissait un prêt
+  // "En cours" existant alors que l'actif restait "En service" (visible dans
+  // deux sélecteurs à la fois).
   try {
-    // ─ INSERT prêt ─────────────────────────────────────────────
-    // CORRECTION FK :
-    //   actif_numero = numéro CNTO de l'actif (CNTO-IT-…) → nouvelle colonne TEXT, sans FK
-    //   produit_id   = ID du produit catalogue (IT-XXXXX)  → colonne existante, FK supprimée
-    const { error: pErr } = await db.from('prets').insert({
-      id,
-      actif_numero:          actifId,              // ← CNTO dans la bonne colonne
-      produit_id:            actif.produit_id || null, // ← ID catalogue produit
-      produit_nom:           actif.produit_nom || '',
-      dept,
-      emprunteur,
-      emprunteur_id:         emprunteurProfile?.id || null,
-      date_debut:            todayStr(),
-      date_retour_prevue:    dateRetourPrev,
-      statut:                STATUS_PRET.EN_COURS,
-      motif,
-      notes:                 dest || '',
-      valideur:              ST.profile?.name  || '',
-      valideur_id:           ST.user?.id       || null,
-      created_at:            tsNow,
-      updated_at:            tsNow,
+    const { error } = await db.rpc('rpc_creer_pret', {
+      p_pret_id:            id,
+      p_actif_id:           actifId,
+      p_dept:               dept,
+      p_emprunteur:         emprunteur,
+      p_emprunteur_id:      emprunteurProfile?.id || null,
+      p_date_retour_prevue: dateRetourPrev,
+      p_motif:              motif,
+      p_notes:              dest || '',
+      p_valideur:           ST.profile?.name || '',
+      p_valideur_id:        ST.user?.id || null,
     });
-    if (pErr) throw pErr;
-
-    // ─ Passer l'actif en "En prêt" ─────────────────────────────
-    const { error: aErr } = await db
-      .from('actifs_individuels')
-      .update({ statut: STATUS_ACTIF.EN_PRET })
-      .eq('id', actifId);
-    if (aErr) throw aErr;
+    if (error) throw error;
 
     closeModal();
     showToast(`Prêt enregistré — "${actifId}" confié à ${emprunteur} jusqu'au ${fmtDate(dateRetourPrev)}`);
@@ -414,22 +403,12 @@ window.retournerPret = async (id) => {
      <strong>${pret.emprunteur}</strong> repassera en statut <strong>En service</strong>.`,
     async () => {
       try {
-        const tsNow = nowISO();
-
-        const { error: pErr } = await db.from('prets').update({
-          statut:             STATUS_PRET.RETOURNE,
-          date_retour_reelle: todayStr(),
-          updated_at:         tsNow,
-        }).eq('id', id);
-        if (pErr) throw pErr;
-
-        if (actifNum) {
-          const { error: aErr } = await db
-            .from('actifs_individuels')
-            .update({ statut: STATUS_ACTIF.EN_SERVICE })
-            .eq('id', actifNum);
-          if (aErr) throw aErr;
-        }
+        const { error } = await db.rpc('rpc_retourner_pret', {
+          p_pret_id:   id,
+          p_user_name: ST.profile?.name || 'Système',
+          p_user_id:   ST.user?.id || null,
+        });
+        if (error) throw error;
 
         showToast(`"${actifNum}" retourné — remis en service`);
         await Promise.all([loadPrets(), loadActifs()]);
@@ -465,19 +444,12 @@ window.perdreActif = async (id) => {
      Cette action est irréversible.`,
     async () => {
       try {
-        const { error: pErr } = await db.from('prets').update({
-          statut:     STATUS_PRET.PERDU,
-          updated_at: nowISO(),
-        }).eq('id', id);
-        if (pErr) throw pErr;
-
-        if (actifNum) {
-          const { error: aErr } = await db
-            .from('actifs_individuels')
-            .update({ statut: STATUS_ACTIF.REFORME })
-            .eq('id', actifNum);
-          if (aErr) throw aErr;
-        }
+        const { error } = await db.rpc('rpc_perdre_pret', {
+          p_pret_id:   id,
+          p_user_name: ST.profile?.name || 'Système',
+          p_user_id:   ST.user?.id || null,
+        });
+        if (error) throw error;
 
         showToast(`"${actifNum}" déclaré perdu — réformé`);
         await Promise.all([loadPrets(), loadActifs()]);
@@ -487,6 +459,47 @@ window.perdreActif = async (id) => {
       }
     },
     '#7c3aed'
+  );
+};
+
+// ─── Retrouvaille d'un actif déclaré perdu (réversibilité — v4) ─
+// Symétrique de reintegrerActif (v3) mais pour les pertes déclarées via un
+// prêt : exige un prêt "Perdu" lié (vérifié côté SQL), pour ne jamais pouvoir
+// annuler une réforme "fin de vie" normale par erreur.
+window.retrouverActifPret = async (id) => {
+  const pret = (ST.prets || []).find(p => p.id === id);
+  if (!pret) return;
+
+  const { dept } = pret;
+  if (dept === 'IT' && !canManIT() || dept === 'Finance' && !canManFin()) {
+    showToast('Action non autorisée', 'err'); return;
+  }
+
+  const actifNum = getActifNumero(pret);
+
+  showConfirm(
+    `Confirmer que "${actifNum}" a été retrouvé ?`,
+    `L'actif <strong>${pret.produit_nom || actifNum}</strong> repassera en statut
+     <strong>En service</strong>. L'auteur et la date de cette réintégration
+     seront conservés dans l'historique de l'actif.`,
+    async () => {
+      try {
+        const { data, error } = await db.rpc('rpc_retrouver_actif', {
+          p_pret_id:   id,
+          p_user_name: ST.profile?.name || 'Système',
+          p_user_id:   ST.user?.id || null,
+          p_obs:       '',
+        });
+        if (error) throw error;
+
+        showToast(`"${actifNum}" retrouvé et réintégré par ${data?.par || ST.profile?.name}`);
+        await Promise.all([loadPrets(), loadActifs()]);
+        render();
+      } catch (err) {
+        showToast('Erreur : ' + err.message, 'err');
+      }
+    },
+    '#10b981'
   );
 };
 

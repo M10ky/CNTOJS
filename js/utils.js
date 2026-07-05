@@ -205,11 +205,16 @@ const accessDenied = () => `<div class="access-denied"><div class="icon"><i clas
 // ═══ AMORTISSEMENT ═══
 function calcVNC(p) {
   if (!p.date_achat || !p.valeur_achat || !p.duree_amortissement || p.valeur_achat<=0) return null;
+  // FIX (v4) : prise en compte de la valeur résiduelle (plancher d'amortissement).
+  // Les `produits` (catalogue) n'ont pas cette colonne → residuelle=0 → comportement
+  // strictement identique à avant pour tout ce qui n'est pas un actif individuel.
+  const residuelle = Math.min(p.valeur_residuelle || 0, p.valeur_achat);
   const achat = new Date(p.date_achat), now = new Date();
   const moisEcoules = Math.max(0,(now.getFullYear()-achat.getFullYear())*12 + (now.getMonth()-achat.getMonth()));
   const duree = p.duree_amortissement;
-  if (moisEcoules >= duree) return 0;
-  return Math.round(p.valeur_achat * (1 - moisEcoules / duree));
+  const montantAmortissable = p.valeur_achat - residuelle;
+  if (moisEcoules >= duree) return residuelle;
+  return Math.round(residuelle + montantAmortissable * (1 - moisEcoules / duree));
 }
 
 function amortPct(p) {
