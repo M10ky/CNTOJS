@@ -52,7 +52,7 @@ const TRANSITIONS_ACTIF = Object.freeze({
   [STATUS_ACTIF.EN_PRET]:      [STATUS_ACTIF.EN_SERVICE, STATUS_ACTIF.REFORME],
   [STATUS_ACTIF.HORS_SERVICE]: [STATUS_ACTIF.EN_SERVICE, STATUS_ACTIF.REFORME, STATUS_ACTIF.SORTI],
   [STATUS_ACTIF.REFORME]:      [],  // terminal
-  [STATUS_ACTIF.SORTI]:        [],  // terminal ← NOUVEAU
+  [STATUS_ACTIF.SORTI]:        [STATUS_ACTIF.EN_SERVICE],  // ← réversible : réintégration possible (rpc_reintegrer_actif)
 });
 
 const TRANSITIONS_DEMANDE = Object.freeze({

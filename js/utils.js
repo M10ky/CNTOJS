@@ -50,7 +50,20 @@ const ST = {
 const todayStr  = () => new Date().toISOString().split('T')[0];
 const nowISO    = () => new Date().toISOString();
 const fmt       = n => new Intl.NumberFormat('fr-FR').format(Math.round(n||0));
-const genId     = pfx => `${pfx}-${Date.now().toString(36).toUpperCase()}`;
+// FIX (duplicate key "mouvements_pkey") : Date.now() seul ne suffit pas à
+// garantir l'unicité lorsque plusieurs ID sont générés en boucle synchrone
+// dans la même milliseconde (ex: sortie multi-actifs, attribution de demande
+// multi-actifs — chaque itération de .map() appelle genId()). Ajout d'un
+// compteur incrémental interne + un suffixe aléatoire : la signature de la
+// fonction est inchangée (même paramètre, même type de retour), donc aucun
+// appelant existant n'a besoin d'être modifié.
+let _genIdSeq = 0;
+const genId = pfx => {
+  _genIdSeq = (_genIdSeq + 1) % 1296; // wrap sur 2 caractères base36
+  const seq  = _genIdSeq.toString(36).toUpperCase().padStart(2, '0');
+  const rand = Math.random().toString(36).slice(2, 5).toUpperCase();
+  return `${pfx}-${Date.now().toString(36).toUpperCase()}${seq}${rand}`;
+};
 
 function fmtDT(iso) {
   if (!iso) return '—';

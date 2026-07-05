@@ -160,6 +160,37 @@ window.submitMvt = async (typeStr) => {
       const tsNow = nowISO();
       const mvtId = genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN');
 
+      // FIX (désynchronisation Inventaire ↔ Actifs) : pour une Entrée
+      // amortissable, la validation des numéros de série ET la création des
+      // actifs individuels sont désormais faites EN PREMIER, avant toute
+      // écriture de stock ou de mouvement. Auparavant, ces deux opérations
+      // arrivaient en dernier (étape 4 originale) : en cas d'échec de
+      // validation OU de createActifUnits(), le stock avait déjà été
+      // incrémenté et le mouvement déjà inséré → écart entre le compteur
+      // "stock" du produit et le nombre réel d'actifs créés. Désormais :
+      // soit tout réussit (actifs + stock + mouvement), soit rien n'est écrit.
+      let entreeActifsResult = null;
+      if (typeStr === 'Entrée' && prod.is_amortissable === true) {
+        const ta = document.getElementById('f-serials');
+        let manualSerials = [];
+        if (ta && ta.value.trim()) {
+          manualSerials = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+          if (manualSerials.length > 0 && manualSerials.length !== qty) {
+            showToast(`${qty} numéro(s) de série requis — ${manualSerials.length} saisi(s)`, 'err');
+            return;
+          }
+          if (new Set(manualSerials).size !== manualSerials.length) {
+            showToast('Numéros de série en double détectés', 'err');
+            return;
+          }
+        }
+        entreeActifsResult = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
+        if (!entreeActifsResult.ok) {
+          showToast(`Échec de la création des actifs — aucune écriture effectuée : ${entreeActifsResult.message || 'Erreur inconnue'}`, 'err');
+          return;
+        }
+      }
+
       // 1. Mise à jour du stock du produit
       const { error: sErr } = await db.from('produits')
         .update({
@@ -234,31 +265,10 @@ window.submitMvt = async (typeStr) => {
         if (mBatchErr) throw mBatchErr;
       }
 
-      // 4. Entrée Amortissable → Création des actifs individuels
-      if (typeStr === 'Entrée' && prod.is_amortissable === true) {
-        const ta = document.getElementById('f-serials');
-        let manualSerials = [];
-
-        if (ta && ta.value.trim()) {
-          manualSerials = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
-
-          if (manualSerials.length > 0 && manualSerials.length !== qty) {
-            showToast(`${qty} numéro(s) de série requis — ${manualSerials.length} saisi(s)`, 'err');
-            return;
-          }
-          if (new Set(manualSerials).size !== manualSerials.length) {
-            showToast('Numéros de série en double détectés', 'err');
-            return;
-          }
-        }
-
-        const res = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
-
-        if (res.ok) {
-          showToast(`Entrée enregistrée + ${qty} actif(s) créé(s) ${res.first ? `— ${res.first}${qty > 1 ? ' → ' + res.last : ''}` : ''}`);
-        } else {
-          showToast(`Entrée enregistrée, mais échec création des actifs : ${res.message || 'Erreur inconnue'}`, 'err');
-        }
+      // 4. Entrée Amortissable → confirmation (les actifs ont déjà été créés
+      // plus haut, AVANT la mise à jour du stock — cf. bloc ajouté en amont).
+      if (typeStr === 'Entrée' && prod.is_amortissable === true && entreeActifsResult?.ok) {
+        showToast(`Entrée enregistrée + ${qty} actif(s) créé(s) ${entreeActifsResult.first ? `— ${entreeActifsResult.first}${qty > 1 ? ' → ' + entreeActifsResult.last : ''}` : ''}`);
       }
       // Toast Sortie amortissable — clair et listant les actifs concernés
       else if (typeStr === 'Sortie' && selectedActifIds.length > 0) {
@@ -278,7 +288,14 @@ window.submitMvt = async (typeStr) => {
 
     } catch (err) {
       console.error(err);
-      showToast('Erreur lors de l\u2019enregistrement : ' + err.message, 'err');
+      // Distingue une coupure réseau (le fetch n'a jamais atteint Supabase)
+      // d'une erreur applicative (contrainte SQL, validation…), pour orienter
+      // le diagnostic sans changer le comportement en cas d'erreur applicative.
+      const isNetworkErr = err instanceof TypeError && /fetch/i.test(err.message || '');
+      const msg = isNetworkErr
+        ? 'Connexion au serveur interrompue (réseau ou projet Supabase indisponible). Vérifiez votre connexion et réessayez.'
+        : err.message;
+      showToast('Erreur lors de l\u2019enregistrement : ' + msg, 'err');
     }
   });
 };
@@ -929,7 +946,15 @@ const rows = allFiltered.map(p => {
     <td style="font-weight:600;font-size:12.5px">${highlight(p.nom, q)}${!pActif ? '<br><span style="font-size:9.5px;color:#94a3b8">Produit inactif</span>' : ''}</td>
     <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(p.categorie, q)}</span></td>
     <td>${p.emplacement ? `<span class="tag" style="color:#1e40af;background:#dbeafe;font-size:9.5px">${highlight(p.emplacement, q)}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
-    <td><span class="stock-num" style="color:${sc}">${p.stock}</span></td>
+    <td><span class="stock-num" style="color:${sc}">${p.stock}</span>${(() => {
+      // Badge de diagnostic (lecture seule, aucun recalcul ni écriture) :
+      // signale un écart entre le stock du produit et le nombre réel
+      // d'actifs individuels encore présents (statut ≠ Sorti/Réformé).
+      if (!p.is_amortissable) return '';
+      const nbReel = (ST.actifs||[]).filter(a => a.produit_id===p.id && a.statut!==STATUS_ACTIF.SORTI && a.statut!==STATUS_ACTIF.REFORME).length;
+      if (nbReel === p.stock) return '';
+      return `<br><span class="tag" style="color:#dc2626;background:#fef2f2;font-size:8.5px;margin-top:2px" title="Stock inventaire (${p.stock}) ≠ actifs réellement disponibles (${nbReel})">⚠ ${nbReel} actif(s) réel(s)</span>`;
+    })()}</td>
     <td style="color:var(--text3)">${p.seuil}</td>`;
 
   if (showP) {
