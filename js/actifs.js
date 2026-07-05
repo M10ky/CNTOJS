@@ -269,6 +269,29 @@ window.horsServiceActif = async (id) => {
 window.reactiverActif = async (id) => {
   const a = ST.actifs.find(x => x.id === id);
   if (!a) return;
+
+  // ← FIX : réactiver un actif "En prêt" est synonyme d'un RETOUR DE PRÊT — pas
+  // d'une simple remise en service. Auparavant, cette fonction faisait un update
+  // brut du statut sans jamais toucher la table `prets` : l'actif redevenait
+  // "En service" alors que son prêt restait affiché "En cours"/"En retard" avec
+  // son emprunteur — deux vérités contradictoires pour le même actif. On route
+  // donc systématiquement vers retournerPret() (déjà responsable de clôturer le
+  // prêt ET de resynchroniser le stock via syncStockDepuisActifs), au lieu de
+  // dupliquer cette logique ici.
+  if (a.statut === STATUS_ACTIF.EN_PRET) {
+    const pretActif = (ST.prets || []).find(p =>
+      getActifNumero(p) === id &&
+      (p.statut === STATUS_PRET.EN_COURS || p.statut === STATUS_PRET.EN_RETARD)
+    );
+    if (pretActif) {
+      await retournerPret(pretActif.id); // ← réutilise le workflow existant (clôture prêt + historique + stock)
+      return;
+    }
+    // Sécurité : actif marqué "En prêt" mais aucun prêt "En cours" retrouvé
+    // (incohérence de données) — on continue sur le chemin normal ci-dessous
+    // plutôt que de bloquer l'utilisateur.
+  }
+
   try {
     const note = buildActifNote(a, 'Remise en service');
     const { error } = await db
