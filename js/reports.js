@@ -19,7 +19,7 @@ function renderDashboard() {
     <td>${fmtDTSplit(m.created_at||m.date)}</td>
     <td>${deptTag(m.dept)}</td>
     <td>${typeBadge(m.type)}</td>
-    <td style="font-weight:500;font-size:12.5px">${m.produit_nom}</td>
+    <td style="font-weight:500;font-size:12.5px">${m.produit_nom}${m.actif_id ? `<br><code class="actif-id" style="margin-top:2px;display:inline-block">${m.actif_id}</code>` : ''}</td>
     <td style="font-weight:700">${m.qty}</td>
     <td style="font-size:11px;color:var(--text2)">${m.emplacement||'—'}</td>
     <td style="font-size:11px;color:var(--text2)">${m.destination||'—'}</td>

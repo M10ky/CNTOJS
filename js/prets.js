@@ -109,7 +109,7 @@ function renderPrets(dept) {
   });
 
   const hdrs = [
-    'ID Prêt', 'N° Actif', 'Produit', 'Emprunteur',
+    'ID Prêt', 'Produit', 'Emprunteur',
     'Date début', 'Retour prévu', 'Délai',
     'Notes / Destination', 'Motif', 'Statut', 'Retour effectif', 'Action',
   ];
@@ -142,8 +142,7 @@ function renderPrets(dept) {
 
     return `<tr${rowStyle}>
       <td><code style="font-size:9px">${highlight(p.id, q)}</code></td>
-      <td><code class="actif-id">${highlight(actifNum || '—', q)}</code></td>
-      <td style="font-weight:600;font-size:12.5px">${highlight(p.produit_nom || '—', q)}</td>
+      <td style="font-weight:600;font-size:12.5px">${highlight(p.produit_nom || '—', q)}<br><code class="actif-id" style="margin-top:2px;display:inline-block">${highlight(actifNum || '—', q)}</code></td>
       <td style="font-weight:500">${highlight(p.emprunteur || '—', q)}</td>
       <td>${fmtDate(p.date_debut || p.created_at)}</td>
       <td style="font-weight:600">${p.date_retour_prevue ? fmtDate(p.date_retour_prevue) : '—'}</td>

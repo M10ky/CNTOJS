@@ -221,7 +221,7 @@ function runSearch(query) {
         const tb = m.type==='Entrée'?'#dcfce7':'#fee2e2';
         return `<div class="search-result-item" onclick="closeSearch();goto('${m.dept==='IT'?'mvt-it':'mvt-fin'}');setTimeout(()=>setInlineQuery('${escQ(m.produit_nom)}'),200)">
           <div class="sri-icon" style="background:${tb}"><i class="ti ti-arrows-exchange" style="color:${tc}"></i></div>
-          <div class="sri-main"><div class="sri-title">${highlight(m.produit_nom,q)}</div>
+          <div class="sri-main"><div class="sri-title">${highlight(m.produit_nom,q)}${m.actif_id ? `<br><code class="actif-id" style="margin-top:2px;display:inline-block">${highlight(m.actif_id,q)}</code>` : ''}</div>
           <div class="sri-sub">${m.type} · ${fmtDate(m.created_at||m.date)} · ${highlight(m.user_name,q)}${m.destination?' → '+highlight(m.destination,q):''}</div></div>
           <div class="sri-meta"><div style="font-size:13px;font-weight:800">×${m.qty}</div>
           <div class="sri-badge" style="color:${tc};background:${tb};margin-top:3px">${m.type}</div></div>

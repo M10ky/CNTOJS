@@ -834,37 +834,42 @@ window.onMvtFieldChange = async () => {
   }
 
   // Section numéros de série : uniquement pour les entrées amortissables
+  // FIX : l'ancien `if (!serlSec || !iE) return;` sortait de la fonction AVANT
+  // d'atteindre le bloc "if (!iE) { ... f-actif-sortie-wrap ... }" plus bas.
+  // Or f-serials-section n'existe jamais en Sortie (rendu uniquement si iE),
+  // donc serlSec valait toujours null pour une Sortie → return systématique →
+  // le sélecteur d'actifs n'était donc jamais rendu.
   const serlSec = document.getElementById('f-serials-section');
-  if (!serlSec || !iE) return;
+  if (serlSec && iE) {
+    if (prod?.is_amortissable) {
+      serlSec.style.display = '';
+      const countEl = document.getElementById('f-serials-count');
+      if (countEl) countEl.textContent = qty;
 
-  if (prod?.is_amortissable) {
-    serlSec.style.display = '';
-    const countEl = document.getElementById('f-serials-count');
-    if (countEl) countEl.textContent = qty;
-
-    const taEl = document.getElementById('f-serials');
-    if (taEl && !taEl.dataset.userEdited) {
-      // Cache du lastSeq pour éviter des requêtes répétées sur changement de qty
-      if (window._mvtCachedProdId !== prodId) {
-        try {
-          const { data: sr } = await db.from('serial_sequences')
-            .select('current_seq').eq('produit_id', prodId).maybeSingle();
-          window._mvtLastSeq     = sr?.current_seq || 0;
-          window._mvtCachedProdId = prodId;
-        } catch(e) { window._mvtLastSeq = 0; }
+      const taEl = document.getElementById('f-serials');
+      if (taEl && !taEl.dataset.userEdited) {
+        // Cache du lastSeq pour éviter des requêtes répétées sur changement de qty
+        if (window._mvtCachedProdId !== prodId) {
+          try {
+            const { data: sr } = await db.from('serial_sequences')
+              .select('current_seq').eq('produit_id', prodId).maybeSingle();
+            window._mvtLastSeq     = sr?.current_seq || 0;
+            window._mvtCachedProdId = prodId;
+          } catch(e) { window._mvtLastSeq = 0; }
+        }
+        const year = new Date().getFullYear();
+        const suggestions = [];
+        for (let i = 0; i < qty; i++) {
+          // generateNomenclature est défini dans actifs.js (chargé après stock.js)
+          suggestions.push(generateNomenclature(prodId, year, window._mvtLastSeq + i + 1));
+        }
+        taEl.value = suggestions.join('\n');
+      } else if (document.getElementById('f-serials-count')) {
+        document.getElementById('f-serials-count').textContent = qty;
       }
-      const year = new Date().getFullYear();
-      const suggestions = [];
-      for (let i = 0; i < qty; i++) {
-        // generateNomenclature est défini dans actifs.js (chargé après stock.js)
-        suggestions.push(generateNomenclature(prodId, year, window._mvtLastSeq + i + 1));
-      }
-      taEl.value = suggestions.join('\n');
-    } else if (document.getElementById('f-serials-count')) {
-      document.getElementById('f-serials-count').textContent = qty;
+    } else {
+      serlSec.style.display = 'none';
     }
-  } else {
-    serlSec.style.display = 'none';
   }
   if (!iE) {
     const wrap  = document.getElementById('f-actif-sortie-wrap');
@@ -1061,6 +1066,10 @@ function renderDem(dept) {
     // ← ÉTAPE B : vérifier si le produit est inactif pour alerter le manager
     const prodRef = ST.produits.find(p=>p.nom.trim().toLowerCase()===d.produit.trim().toLowerCase()&&p.dept===dept);
     const prodInactif = prodRef && !isActif(prodRef);
+    // Actifs individuels attribués à cette demande (produit amortissable, déjà validée)
+    // Réutilise les mouvements existants (demande_id + actif_id déjà écrits par
+    // submitDemAttribution) — aucune nouvelle donnée, aucun nouveau calcul métier.
+    const actifsAttribues = (ST.mouvements||[]).filter(m=>m.demande_id===d.id && m.actif_id).map(m=>m.actif_id);
     const acts=d.statut==='En attente'&&canM
       ? prodInactif
         ? `<span class="readonly-badge" style="color:#f59e0b;border-color:#fcd34d" title="Produit désactivé — réactivez-le d'abord"><i class="ti ti-alert-triangle"></i> Produit inactif</span>`
@@ -1073,7 +1082,7 @@ function renderDem(dept) {
       <td><code style="font-size:9px">${highlight(d.id,q)}</code></td>
       <td>${fmtDTSplit(d.created_at||d.date)}</td>
       <td style="font-weight:500;font-size:12.5px">${highlight(d.demandeur,q)}</td>
-      <td style="font-weight:500">${highlight(d.produit,q)}${prodInactif?'<br><span style="font-size:9px;color:#f59e0b">produit inactif</span>':''}</td>
+      <td style="font-weight:500">${highlight(d.produit,q)}${prodInactif?'<br><span style="font-size:9px;color:#f59e0b">produit inactif</span>':''}${actifsAttribues.length?`<br>${actifsAttribues.map(aid=>`<code class="actif-id" style="margin-top:2px;display:inline-block">${highlight(aid,q)}</code>`).join(' ')}`:''}</td>
       <td style="font-weight:700">${d.qty}</td>
       <td>${urgBadge(d.urgence)}</td>
       <td style="font-size:11px;color:var(--text2)">${highlight(d.dest||'—',q)}</td>
