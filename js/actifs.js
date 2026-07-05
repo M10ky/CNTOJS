@@ -215,6 +215,40 @@ function buildActifNote(actif, action) {
   return actif?.observation ? `${line}\n${actif.observation}` : line;
 }
 
+// ─── Synchronisation Inventaire ↔ Actifs individuels ───────────
+// Recalcule produits.stock strictement à partir du nombre d'actifs
+// actuellement au statut STATUS_ACTIF.EN_SERVICE pour ce produit — seul
+// statut compté comme "disponible" (En prêt / Hors service / Sorti /
+// Réformé ne comptent jamais, cf. règles métier). Appelée après CHAQUE
+// changement de statut d'actif pouvant faire varier la disponibilité :
+// c'est la cause racine du bug — certaines actions (retour de prêt,
+// remise en service, actif retrouvé) ne mettaient jamais à jour
+// produits.stock, en comptant sur des RPC qui n'incrémentaient pas
+// systématiquement la bonne colonne, ou sur aucun mécanisme du tout.
+window.syncStockDepuisActifs = async (produitId) => {
+  if (!produitId) return;
+  try {
+    await loadActifs(); // s'assurer que ST.actifs reflète le tout dernier changement
+    const prod = ST.produits.find(p => p.id === produitId);
+    if (!prod || !prod.is_amortissable) return; // ← ne touche jamais les produits non amortissables
+
+    const nbDisponible = ST.actifs.filter(
+      a => a.produit_id === produitId && a.statut === STATUS_ACTIF.EN_SERVICE
+    ).length;
+
+    if (nbDisponible === prod.stock) return; // déjà synchronisé — pas d'écriture inutile
+
+    const { error } = await db.from('produits')
+      .update({ stock: nbDisponible, updated_at: nowISO() })
+      .eq('id', produitId);
+    if (error) throw error;
+
+    await loadProduits();
+  } catch (err) {
+    console.error('[syncStockDepuisActifs]', err);
+  }
+};
+
 // ─── Actions sur les actifs ────────────────────────────────────
 window.horsServiceActif = async (id) => {
   const a = ST.actifs.find(x => x.id === id);
@@ -227,7 +261,8 @@ window.horsServiceActif = async (id) => {
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" mis hors service`);
-    await loadActifs(); render();
+    await syncStockDepuisActifs(a.produit_id); // ← FIX : recalcule le stock (actif sorti du pool "disponible")
+    render();
   } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
 };
 
@@ -242,7 +277,8 @@ window.reactiverActif = async (id) => {
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" réactivé en service`);
-    await loadActifs(); render();
+    await syncStockDepuisActifs(a.produit_id); // ← FIX : l'actif redevient disponible, stock recalculé
+    render();
   } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
 };
 
@@ -272,7 +308,11 @@ window.reintegrerActif = async (id) => {
         });
         if (error) throw error;
         showToast(`"${id}" réintégré — remis en service`);
-        await Promise.all([loadActifs(), loadProduits(), loadMouvements(), loadMouvementsEntrees()]);
+        await Promise.all([loadMouvements(), loadMouvementsEntrees()]);
+        // ← FIX : recalcul explicite du stock depuis les actifs réels, au lieu de
+        // faire confiance uniquement à l'incrémentation faite côté RPC (garde-fou
+        // qui corrige toute dérive silencieuse entre inventaire et actifs).
+        await syncStockDepuisActifs(a.produit_id);
         render();
       } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
     },
@@ -295,7 +335,8 @@ window.reformerActif = async (id) => {
           .eq('id', id);
         if (error) throw error;
         showToast(`"${id}" réformé`);
-        await loadActifs(); render();
+        await syncStockDepuisActifs(a.produit_id); // ← FIX : réforme = sortie définitive du pool disponible
+        render();
       } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
     },
     '#ef4444'

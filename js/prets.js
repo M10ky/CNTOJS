@@ -411,7 +411,12 @@ window.retournerPret = async (id) => {
         if (error) throw error;
 
         showToast(`"${actifNum}" retourné — remis en service`);
-        await Promise.all([loadPrets(), loadActifs()]);
+        await loadPrets();
+        // ← FIX : c'était la cause principale du bug signalé — le retour de prêt
+        // ne rechargeait jamais produits.stock, ni ne le recalculait. L'actif
+        // redevenait "En service" mais l'inventaire restait figé sur l'ancienne
+        // valeur, désynchronisant les deux modules.
+        await syncStockDepuisActifs(pret.produit_id);
         render();
       } catch (err) {
         showToast('Erreur : ' + err.message, 'err');
@@ -452,7 +457,8 @@ window.perdreActif = async (id) => {
         if (error) throw error;
 
         showToast(`"${actifNum}" déclaré perdu — réformé`);
-        await Promise.all([loadPrets(), loadActifs()]);
+        await loadPrets();
+        await syncStockDepuisActifs(pret.produit_id); // ← FIX : perte = sortie définitive, stock recalculé
         render();
       } catch (err) {
         showToast('Erreur : ' + err.message, 'err');
@@ -493,7 +499,10 @@ window.retrouverActifPret = async (id) => {
         if (error) throw error;
 
         showToast(`"${actifNum}" retrouvé et réintégré par ${data?.par || ST.profile?.name}`);
-        await Promise.all([loadPrets(), loadActifs()]);
+        await loadPrets();
+        // ← FIX : symétrique de retournerPret — un actif "Perdu" retrouvé revient
+        // "En service" mais le stock catalogue n'était jamais réincrémenté.
+        await syncStockDepuisActifs(pret.produit_id);
         render();
       } catch (err) {
         showToast('Erreur : ' + err.message, 'err');
