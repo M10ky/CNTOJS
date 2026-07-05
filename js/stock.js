@@ -372,6 +372,7 @@ window.validDem = async (dept, id, action) => {
   if (dept==='IT'&&!canValidIT()||dept==='Finance'&&!canValidFin()) { showToast('Action non autorisée','err'); return; }
   const dem=ST.demandes.find(d=>d.id===id);
   if (!dem) return;
+
   if (action==='Validé') {
     await loadProduits();
     const prod = ST.produits.find(p => p.nom.trim().toLowerCase()===dem.produit.trim().toLowerCase() && p.dept===dept);
@@ -380,22 +381,209 @@ window.validDem = async (dept, id, action) => {
     if (!isActif(prod)) {
       showToast(`"${prod.nom}" est désactivé — réactivez-le avant de valider cette demande`,'err'); return;
     }
+
+    // ← Produit amortissable : la déduction directe est remplacée par la
+    // sélection d'actifs individuels. Le statut de la demande n'est mis à
+    // jour qu'après attribution (cf. submitDemAttribution ci-dessous).
+    if (prod.is_amortissable === true) {
+      await loadActifs();
+      openDemAttribution(dept, id);
+      return;
+    }
+
     if (prod.stock < dem.qty) { showToast(`Stock insuffisant : ${prod.stock} disponible, ${dem.qty} demandé`,'err'); return; }
-    try {
-      const tsNow=nowISO();
-      const { error:sErr } = await db.from('produits').update({stock:prod.stock-dem.qty,updated_at:tsNow}).eq('id',prod.id);
-      if (sErr) throw sErr;
-      const mvtId=genId(dept==='IT'?'MVT-IT':'MVT-FIN');
-      const { error:mErr } = await db.from('mouvements').insert({ id:mvtId, date:todayStr(), created_at:tsNow, type:'Sortie', produit_id:prod.id, produit_nom:prod.nom, qty:dem.qty, valeur:dem.qty*prod.prix, dept, user_name:ST.profile?.name||'Système', user_id:ST.user?.id, destination:dem.dest||'', observation:`Validation demande ${id} — ${dem.demandeur}` });
-      if (mErr) throw mErr;
-    } catch(err) { showToast('Erreur: '+err.message,'err'); return; }
+
+    await withSubmitLock(`[data-dem-id="${id}"] button`, async () => {
+      try {
+        const tsNow=nowISO();
+        const { error:sErr } = await db.from('produits').update({stock:prod.stock-dem.qty,updated_at:tsNow}).eq('id',prod.id);
+        if (sErr) throw sErr;
+        const mvtId=genId(dept==='IT'?'MVT-IT':'MVT-FIN');
+        const { error:mErr } = await db.from('mouvements').insert({ id:mvtId, date:todayStr(), created_at:tsNow, type:'Sortie', produit_id:prod.id, produit_nom:prod.nom, qty:dem.qty, valeur:dem.qty*prod.prix, dept, user_name:ST.profile?.name||'Système', user_id:ST.user?.id, destination:dem.dest||'', demande_id:id, observation:`Validation demande ${id} — ${dem.demandeur}` });
+        if (mErr) throw mErr;
+        const { error:dErr } = await db.from('demandes').update({ statut:'Validé', valideur:ST.profile?.name||'', valideur_id:ST.user?.id, updated_at:nowISO() }).eq('id',id);
+        if (dErr) throw dErr;
+        showToast('Demande validée — stock mis à jour');
+        await Promise.all([loadDemandes(),loadProduits(),loadMouvements()]); render();
+      } catch(err) { showToast('Erreur: '+err.message,'err'); }
+    });
+    return;
   }
-  try {
-    const { error } = await db.from('demandes').update({ statut:action, valideur:ST.profile?.name||'', valideur_id:ST.user?.id, updated_at:nowISO() }).eq('id',id);
-    if (error) throw error;
-    showToast(action==='Validé'?'Demande validée — stock mis à jour':'Demande refusée');
-    await Promise.all([loadDemandes(),loadProduits(),loadMouvements()]); render();
-  } catch(err) { showToast('Erreur: '+err.message,'err'); }
+
+  // ─ Refus (verrouillé de la même façon que la validation) ─
+  await withSubmitLock(`[data-dem-id="${id}"] button`, async () => {
+    try {
+      const { error } = await db.from('demandes').update({ statut:action, valideur:ST.profile?.name||'', valideur_id:ST.user?.id, updated_at:nowISO() }).eq('id',id);
+      if (error) throw error;
+      showToast('Demande refusée');
+      await Promise.all([loadDemandes(),loadProduits(),loadMouvements()]); render();
+    } catch(err) { showToast('Erreur: '+err.message,'err'); }
+  });
+};
+
+// ═══════════════════════════════════════════════════════════════
+//   VALIDATION DE DEMANDE — PRODUIT AMORTISSABLE
+//   Sélecteur d'actifs individuels dédié (même filtre EN_SERVICE que la
+//   sortie directe) : le validateur choisit précisément quel matériel est
+//   attribué avant que la demande ne soit réellement validée.
+// ═══════════════════════════════════════════════════════════════
+window.openDemAttribution = (dept, demId) => {
+  ST.modal = { type: 'demAttrib', dept, demId };
+  renderModalDemAttribution();
+};
+
+function renderModalDemAttribution() {
+  document.getElementById('modal-el')?.remove();
+  if (!ST.modal || ST.modal.type !== 'demAttrib') return;
+
+  const { dept, demId } = ST.modal;
+  const dem = ST.demandes.find(d => d.id === demId);
+  if (!dem) { closeModal(); return; }
+
+  const prod = ST.produits.find(p => p.nom.trim().toLowerCase()===dem.produit.trim().toLowerCase() && p.dept===dept);
+  if (!prod) { closeModal(); showToast(`Produit "${dem.produit}" introuvable`, 'err'); return; }
+
+  const color = dept === 'IT' ? '#4f46e5' : '#10b981';
+  const dispo = (ST.actifs || []).filter(a => a.produit_id === prod.id && a.statut === STATUS_ACTIF.EN_SERVICE);
+
+  if (dispo.length < dem.qty) {
+    const ov = document.createElement('div');
+    ov.id = 'modal-el'; ov.className = 'overlay';
+    ov.innerHTML = `<div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-h"><span class="modal-ttl">Attribution — ${dem.produit}</span>
+        <button class="close-btn" onclick="closeModal()">✕</button></div>
+      <div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
+        <i class="ti ti-alert-triangle"></i>
+        <div><strong>${dispo.length}</strong> matériel(s) « En service » disponible(s), mais
+        <strong>${dem.qty}</strong> demandé(s). Complétez le stock (entrée) ou ajustez la demande
+        avant de valider.</div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">${btn('Fermer','#94a3b8',true,'closeModal()')}</div>
+    </div>`;
+    ov.addEventListener('click', closeModal);
+    document.body.appendChild(ov);
+    return;
+  }
+
+  const rows = dispo.map(a => `
+    <tr>
+      <td><input type="checkbox" class="f-dem-attrib-chk" value="${a.id}" onchange="updateDemAttribCount()"></td>
+      <td><code class="actif-id">${a.id}</code></td>
+      <td style="font-size:11px">${a.emplacement || '—'}</td>
+      <td style="font-size:11px;font-family:var(--mono)">${fmt(a.valeur_achat)} MGA</td>
+      <td style="font-size:11px">${fmtDate(a.date_entree)}</td>
+      <td>${actifStatutBadge(a.statut)}</td>
+    </tr>`).join('');
+
+  const body = `
+    <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
+      Demande de <strong>${dem.demandeur}</strong> · ${dem.produit} · quantité demandée : <strong>${dem.qty}</strong>
+    </div>
+    <div class="form-row">
+      <label class="form-lbl">Matériels à attribuer <span class="req">*</span></label>
+      <div style="max-height:260px;overflow-y:auto;overflow-x:auto;border:1.5px solid var(--border);border-radius:8px">
+        <table style="width:100%">
+          <thead><tr><th style="width:30px"></th><th>N° CNTO / Série</th><th>Emplacement</th><th>Valeur achat</th><th>Date entrée</th><th>État</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:6px;font-size:11.5px;color:var(--text2)">
+        <strong id="f-dem-attrib-count">0</strong> / ${dem.qty} matériel(s) sélectionné(s)
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+      ${btn('Annuler','#94a3b8',true,'closeModal()')}
+      <button id="btn-submit-dem-attrib" class="btn btn-solid" style="background:${color};border-color:${color}" onclick="submitDemAttribution()">✓ Attribuer et valider</button>
+    </div>`;
+
+  const ov = document.createElement('div');
+  ov.id = 'modal-el'; ov.className = 'overlay';
+  ov.innerHTML = `<div class="modal modal-wide" onclick="event.stopPropagation()">
+    <div class="modal-h"><span class="modal-ttl">📋 Attribution de matériel — ${dem.produit}</span>
+      <button class="close-btn" onclick="closeModal()">✕</button></div>
+    ${body}
+  </div>`;
+  ov.addEventListener('click', closeModal);
+  document.body.appendChild(ov);
+}
+
+window.updateDemAttribCount = () => {
+  const n = document.querySelectorAll('.f-dem-attrib-chk:checked').length;
+  const el = document.getElementById('f-dem-attrib-count');
+  if (el) el.textContent = n;
+};
+
+window.submitDemAttribution = async () => {
+  const { dept, demId } = ST.modal || {};
+  if (!demId) return;
+  if (dept==='IT'&&!canValidIT()||dept==='Finance'&&!canValidFin()) { showToast('Action non autorisée','err'); return; }
+
+  const dem = ST.demandes.find(d => d.id === demId);
+  if (!dem) return;
+  const prod = ST.produits.find(p => p.nom.trim().toLowerCase()===dem.produit.trim().toLowerCase() && p.dept===dept);
+  if (!prod) { showToast('Produit introuvable', 'err'); return; }
+
+  const selectedIds = Array.from(document.querySelectorAll('.f-dem-attrib-chk:checked')).map(el => el.value);
+  if (selectedIds.length !== dem.qty) {
+    showToast(`Sélectionnez exactement ${dem.qty} matériel(s) (${selectedIds.length} sélectionné(s))`, 'err');
+    return;
+  }
+
+  await withSubmitLock('#btn-submit-dem-attrib', async () => {
+    try {
+      // Re-vérification anti-conflit (un autre agent a pu sortir/prêter l'actif
+      // entre l'ouverture du modal et la validation)
+      await loadActifs();
+      for (const aid of selectedIds) {
+        const a = (ST.actifs || []).find(x => x.id === aid);
+        if (!a || a.statut !== STATUS_ACTIF.EN_SERVICE) {
+          showToast(`Le matériel ${aid} n'est plus disponible (statut : ${a?.statut || 'inconnu'})`, 'err');
+          return;
+        }
+      }
+
+      const tsNow = nowISO();
+      const mvtRows = selectedIds.map(actifId => {
+        const actif = ST.actifs.find(a => a.id === actifId);
+        return {
+          id: genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN'),
+          date: todayStr(),
+          created_at: nowISO(),
+          type: 'Sortie',
+          produit_id: prod.id,
+          produit_nom: prod.nom,
+          actif_id: actifId,
+          qty: 1,
+          valeur: actif?.valeur_achat || 0,
+          dept,
+          user_name: ST.profile?.name || 'Système',
+          user_id: ST.user?.id || null,
+          destination: dem.dest || '',
+          demande_id: dem.id,
+          observation: `Attribution demande ${dem.id} — ${dem.demandeur}`,
+        };
+      });
+
+      const { error: mErr } = await db.from('mouvements').insert(mvtRows);
+      if (mErr) throw mErr;
+
+      const { error: aErr } = await db.from('actifs_individuels').update({ statut: STATUS_ACTIF.SORTI }).in('id', selectedIds);
+      if (aErr) throw aErr;
+
+      const { error: sErr } = await db.from('produits').update({ stock: prod.stock - selectedIds.length, updated_at: tsNow }).eq('id', prod.id);
+      if (sErr) throw sErr;
+
+      const { error: dErr } = await db.from('demandes').update({ statut: 'Validé', valideur: ST.profile?.name || '', valideur_id: ST.user?.id, updated_at: nowISO() }).eq('id', demId);
+      if (dErr) throw dErr;
+
+      closeModal();
+      showToast(`Demande validée — ${selectedIds.length} matériel(s) attribué(s)`);
+      await Promise.all([loadDemandes(), loadProduits(), loadMouvements(), loadActifs()]);
+      render();
+    } catch (err) {
+      showToast('Erreur : ' + err.message, 'err');
+    }
+  });
 };
 // ─── Sortie amortissable : rendu du sélecteur multi-actifs ────
 // Seuls les actifs au statut STATUS_ACTIF.EN_SERVICE apparaissent (déjà sortis,
@@ -417,16 +605,18 @@ function renderActifSortieSelector(prod, q='') {
     <tr>
       <td><input type="checkbox" class="f-actif-sortie-chk" value="${a.id}" onchange="updateActifSortieCount()"></td>
       <td><code class="actif-id">${a.id}</code></td>
-      <td style="font-size:11px">${a.categorie || '—'}</td>
       <td style="font-size:11px">${a.emplacement || '—'}</td>
+      <td style="font-size:11px;font-family:var(--mono)">${fmt(a.valeur_achat)} MGA</td>
+      <td style="font-size:11px">${fmtDate(a.date_entree)}</td>
+      <td>${actifStatutBadge(a.statut)}</td>
     </tr>`).join('');
 
   return `
     <div class="form-row">
       <label class="form-lbl">Matériels à sortir <span class="req">*</span></label>
-      <div style="max-height:220px;overflow-y:auto;border:1.5px solid var(--border);border-radius:8px">
+      <div style="max-height:220px;overflow-y:auto;overflow-x:auto;border:1.5px solid var(--border);border-radius:8px">
         <table style="width:100%">
-          <thead><tr><th style="width:30px"></th><th>N° Inventaire / Série</th><th>Catégorie</th><th>Emplacement</th></tr></thead>
+          <thead><tr><th style="width:30px"></th><th>N° CNTO / Série</th><th>Emplacement</th><th>Valeur achat</th><th>Date entrée</th><th>État</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -874,7 +1064,7 @@ function renderDem(dept) {
     const acts=d.statut==='En attente'&&canM
       ? prodInactif
         ? `<span class="readonly-badge" style="color:#f59e0b;border-color:#fcd34d" title="Produit désactivé — réactivez-le d'abord"><i class="ti ti-alert-triangle"></i> Produit inactif</span>`
-        : `<div style="display:flex;gap:4px">
+        : `<div data-dem-id="${d.id}" style="display:flex;gap:4px">
             ${btn('✓ Valider','#10b981',false,`validDem('${dept}','${d.id}','Validé')`)}
             ${btn('✕','#ef4444',true,`validDem('${dept}','${d.id}','Refusé')`)}
           </div>`

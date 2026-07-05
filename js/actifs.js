@@ -43,9 +43,54 @@ function generateNomenclature(produitId, year, seq) {
   return `CNTO-${cleanId}-${yy}-${String(seq).padStart(4, '0')}`;
 }
 window.getHistoriqueActif = (actifId) => {
-  return (ST.mouvements || [])
-    .filter(m => m.actif_id === actifId)
-    .sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+  const actif = (ST.actifs || []).find(a => a.id === actifId);
+
+  // Mouvements individuels (sortie directe, attribution de demande) + le
+  // mouvement d'entrée d'origine, partagé entre tous les actifs créés dans
+  // la même réception et retrouvé via mouvement_entree_id (jamais dupliqué,
+  // aucune écriture supplémentaire nécessaire côté submitMvt/createActifUnits).
+  const mvts = (ST.mouvements || [])
+    .filter(m => m.actif_id === actifId || (actif && actif.mouvement_entree_id && m.id === actif.mouvement_entree_id))
+    .map(m => ({
+      created_at: m.created_at || m.date,
+      kind:       'mouvement',
+      label:      m.type,
+      qty:        m.qty,
+      valeur:     m.valeur,
+      lieu:       m.destination || m.emplacement || '—',
+      user:       m.user_name || '—',
+      detail:     m.demande_id ? `Demande ${m.demande_id}${m.observation ? ' — ' + m.observation : ''}` : (m.observation || ''),
+    }));
+
+  // Prêts liés à cet actif (numéro CNTO) : un événement « Prêt » à l'emprunt,
+  // puis « Retour » ou « Perdu » selon l'issue — reconstruit depuis ST.prets
+  // (déjà chargé par loadPrets), sans nouvelle table ni requête additionnelle.
+  const prets = [];
+  (ST.prets || []).filter(p => getActifNumero(p) === actifId).forEach(p => {
+    prets.push({
+      created_at: p.created_at || p.date_debut,
+      kind: 'pret', label: 'Prêt', qty: 1, valeur: null,
+      lieu: p.emprunteur || '—', user: p.valideur || '—',
+      detail: p.motif || '',
+    });
+    if (p.statut === STATUS_PRET.RETOURNE && p.date_retour_reelle) {
+      prets.push({
+        created_at: p.date_retour_reelle,
+        kind: 'pret', label: 'Retour', qty: 1, valeur: null,
+        lieu: p.emprunteur || '—', user: '—',
+        detail: 'Retour de prêt',
+      });
+    } else if (p.statut === STATUS_PRET.PERDU) {
+      prets.push({
+        created_at: p.updated_at || p.date_retour_prevue || p.created_at,
+        kind: 'pret', label: 'Perdu', qty: 1, valeur: null,
+        lieu: p.emprunteur || '—', user: '—',
+        detail: 'Déclaré perdu — réformé',
+      });
+    }
+  });
+
+  return [...mvts, ...prets].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 };
 // ─── Création automatique d'actifs à l'entrée de stock ────────
 // FIX : la fonction renvoie { ok, message, first, last } pour que l'appelant
@@ -160,14 +205,25 @@ window.updateAmortissable = async (prodId, val) => {
   } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
 };
 
+// ─── Notes d'audit sur changement de statut ────────────────────
+// Aucune nouvelle table : on réutilise la colonne 'observation' déjà
+// présente sur actifs_individuels pour tenir un journal horodaté, cumulatif
+// et lisible de chaque action de cycle de vie (HS / réactivation / réforme /
+// transfert). Consommé directement par openActifHistorique() ci-dessus.
+function buildActifNote(actif, action) {
+  const line = `${fmtDT(nowISO())} — ${action} (${ST.profile?.name || 'Système'})`;
+  return actif?.observation ? `${line}\n${actif.observation}` : line;
+}
+
 // ─── Actions sur les actifs ────────────────────────────────────
 window.horsServiceActif = async (id) => {
   const a = ST.actifs.find(x => x.id === id);
   if (!a) return;
   try {
+    const note = buildActifNote(a, 'Mis hors service');
     const { error } = await db
       .from('actifs_individuels')
-      .update({ statut: STATUS_ACTIF.HORS_SERVICE }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
+      .update({ statut: STATUS_ACTIF.HORS_SERVICE, observation: note }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" mis hors service`);
@@ -179,9 +235,10 @@ window.reactiverActif = async (id) => {
   const a = ST.actifs.find(x => x.id === id);
   if (!a) return;
   try {
+    const note = buildActifNote(a, 'Remise en service');
     const { error } = await db
       .from('actifs_individuels')
-      .update({ statut: STATUS_ACTIF.EN_SERVICE }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
+      .update({ statut: STATUS_ACTIF.EN_SERVICE, observation: note }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
       .eq('id', id);
     if (error) throw error;
     showToast(`"${id}" réactivé en service`);
@@ -197,9 +254,10 @@ window.reformerActif = async (id) => {
     `L'actif "${a.produit_nom}" sera définitivement réformé. Cette action est irréversible.`,
     async () => {
       try {
+        const note = buildActifNote(a, 'Réformé');
         const { error } = await db
           .from('actifs_individuels')
-          .update({ statut: STATUS_ACTIF.REFORME }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
+          .update({ statut: STATUS_ACTIF.REFORME, observation: note }) // ← FIX : 'updated_at' retiré (colonne inexistante sur actifs_individuels)
           .eq('id', id);
         if (error) throw error;
         showToast(`"${id}" réformé`);
@@ -207,6 +265,40 @@ window.reformerActif = async (id) => {
       } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
     },
     '#ef4444'
+  );
+};
+
+// ─── Transfert / changement d'emplacement ──────────────────────
+// N'est pas un changement de statut (n'entre pas dans TRANSITIONS_ACTIF) :
+// ne touche que 'emplacement' + note d'audit. Bloqué sur les statuts
+// terminaux (Réformé / Sorti) uniquement.
+window.changerEmplacementActif = (id) => {
+  const a = ST.actifs.find(x => x.id === id);
+  if (!a) return;
+  if (a.dept === 'IT' && !canManIT() || a.dept === 'Finance' && !canManFin()) {
+    showToast('Action non autorisée', 'err'); return;
+  }
+  const emplOpts = (ST.params.emplacements.length ? ST.params.emplacements : ['Stock Principal'])
+    .map(e => `<option value="${e}" ${e === (a.emplacement || '') ? 'selected' : ''}>${e}</option>`).join('');
+  showConfirm(
+    `Changer l'emplacement de "${id}" ?`,
+    `<div style="margin-bottom:10px">Emplacement actuel : <strong>${a.emplacement || '—'}</strong></div>
+     <select id="transfer-empl-select" style="width:100%">${emplOpts}</select>`,
+    async () => {
+      const nouvel = document.getElementById('transfer-empl-select')?.value;
+      if (!nouvel || nouvel === a.emplacement) return;
+      try {
+        const note = buildActifNote(a, `Transfert : ${a.emplacement || '—'} → ${nouvel}`);
+        const { error } = await db
+          .from('actifs_individuels')
+          .update({ emplacement: nouvel, observation: note })
+          .eq('id', id);
+        if (error) throw error;
+        showToast(`"${id}" transféré vers ${nouvel}`);
+        await loadActifs(); render();
+      } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
+    },
+    '#0ea5e9'
   );
 };
 
@@ -324,6 +416,7 @@ function renderActifs(dept) {
             : (a.statut === 'Réformé' || a.statut === 'Sorti'
                 ? `<span class="tag ${a.statut==='Sorti'?'actif-sorti':'actif-rf'}" style="font-size:9.5px">${a.statut}</span>`
                 : '')}
+          ${(a.statut !== STATUS_ACTIF.REFORME && a.statut !== STATUS_ACTIF.SORTI) ? btn('📍', '#0ea5e9', true, `changerEmplacementActif('${a.id}')`, '') : ''}
           ${btn('🕘', '#6366f1', true, `openActifHistorique('${a.id}')`, '')}
         </div>`
       : `${btn('🕘 Historique', '#6366f1', true, `openActifHistorique('${a.id}')`)}`;
@@ -422,16 +515,26 @@ window.openActifHistorique = (actifId) => {
   const a = (ST.actifs || []).find(x => x.id === actifId);
   const hist = getHistoriqueActif(actifId);
 
+  const badgeFor = (h) => {
+    if (h.kind === 'pret') {
+      if (h.label === 'Prêt')   return `<span class="tag pret-encours">⇄ Prêt</span>`;
+      if (h.label === 'Retour') return `<span class="tag pret-retourne">✓ Retour</span>`;
+      if (h.label === 'Perdu')  return `<span class="tag pret-perdu">✕ Perdu</span>`;
+    }
+    return typeBadge(h.label);
+  };
+
   const rows = hist.length
-    ? hist.map(m => `<tr>
-        <td>${fmtDTSplit(m.created_at || m.date)}</td>
-        <td>${typeBadge(m.type)}</td>
-        <td style="font-weight:600">${m.qty}</td>
-        <td style="font-weight:700">${fmt(m.valeur)} MGA</td>
-        <td style="font-size:11px;color:var(--text2)">${m.destination || m.emplacement || '—'}</td>
-        <td style="font-size:11px;color:var(--text3)">${m.user_name || '—'}</td>
+    ? hist.map(h => `<tr>
+        <td>${fmtDTSplit(h.created_at)}</td>
+        <td>${badgeFor(h)}</td>
+        <td style="font-weight:600">${h.qty ?? '—'}</td>
+        <td style="font-weight:700">${h.valeur!=null ? fmt(h.valeur)+' MGA' : '—'}</td>
+        <td style="font-size:11px;color:var(--text2)">${h.lieu || '—'}</td>
+        <td style="font-size:11px;color:var(--text3)">${h.user || '—'}</td>
+        <td style="font-size:11px;color:var(--text3);max-width:140px">${h.detail || ''}</td>
       </tr>`).join('')
-    : `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Aucun mouvement enregistré pour cet actif</td></tr>`;
+    : `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text3)">Aucun historique enregistré pour cet actif</td></tr>`;
 
   const ov = document.createElement('div');
   ov.id = 'modal-el';
@@ -443,9 +546,10 @@ window.openActifHistorique = (actifId) => {
     </div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
       ${a?.produit_nom || '—'} · Statut actuel : ${actifStatutBadge(a?.statut || '—')}
+      ${a?.observation ? `<div style="margin-top:8px;padding:8px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);white-space:pre-line">${a.observation}</div>` : ''}
     </div>
     <div style="overflow-x:auto"><table>
-      <thead><tr>${['Date & Heure','Type','Qté','Valeur','Empl./Dest.','Agent'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <thead><tr>${['Date & Heure','Action','Qté','Valeur','Empl./Dest.','Agent','Détail'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     <div style="display:flex;justify-content:flex-end;margin-top:16px">
