@@ -195,7 +195,19 @@ window.submitMvt = async (typeStr) => {
 
       // 3. Traitement spécifique Sortie Amortissable — UN mouvement PAR actif,
       //    avec actif_id rempli, + passage du statut à 'Sorti'.
+      // FIX intégrité : on met à jour le statut des actifs AVANT d'insérer les
+      // mouvements. Ainsi, si la contrainte CHECK côté base (statut invalide,
+      // colonne manquante, etc.) rejette la mise à jour, AUCUN mouvement n'est
+      // créé — on évite les mouvements orphelins (actif_id renseigné mais actif
+      // resté "En service"). Logique métier et données envoyées strictement
+      // identiques, seul l'ordre des deux opérations est inversé.
       if (typeStr === 'Sortie' && selectedActifIds.length > 0) {
+        const { error: aErr } = await db
+          .from('actifs_individuels')
+          .update({ statut: STATUS_ACTIF.SORTI })
+          .in('id', selectedActifIds);
+        if (aErr) throw aErr;
+
         const mvtRows = selectedActifIds.map(actifId => {
           const actif = ST.actifs.find(a => a.id === actifId);
           return {
@@ -220,13 +232,6 @@ window.submitMvt = async (typeStr) => {
         });
         const { error: mBatchErr } = await db.from('mouvements').insert(mvtRows);
         if (mBatchErr) throw mBatchErr;
-
-        // Mise à jour du statut de CHAQUE actif → 'Sorti' (en une seule requête)
-        const { error: aErr } = await db
-          .from('actifs_individuels')
-          .update({ statut: STATUS_ACTIF.SORTI })
-          .in('id', selectedActifIds);
-        if (aErr) throw aErr;
       }
 
       // 4. Entrée Amortissable → Création des actifs individuels
