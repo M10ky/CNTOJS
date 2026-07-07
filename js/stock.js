@@ -580,7 +580,13 @@ window.submitDemAttribution = async () => {
 
       closeModal();
       showToast(`Demande validée — ${selectedIds.length} matériel(s) attribué(s)`);
-      await Promise.all([loadDemandes(), loadProduits(), loadMouvements(), loadActifs()]);
+      await Promise.all([loadDemandes(), loadMouvements()]);
+      // ← FIX : garde-fou — l'attribution retire des actifs du pool "En service"
+      // (statut modifié côté RPC). loadProduits() seul faisait confiance au stock
+      // renvoyé par le RPC ; syncStockDepuisActifs recalcule ce stock directement
+      // depuis les statuts réels des actifs, garantissant la cohérence même si
+      // le RPC dérive.
+      await syncStockDepuisActifs(prod.id);
       render();
     } catch (err) {
       showToast('Erreur : ' + err.message, 'err');
