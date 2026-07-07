@@ -374,7 +374,13 @@ window.submitPret = async () => {
 
     closeModal();
     showToast(`Prêt enregistré — "${actifId}" confié à ${emprunteur} jusqu'au ${fmtDate(dateRetourPrev)}`);
-    await Promise.all([loadPrets(), loadActifs()]);
+    await loadPrets();
+    // ← FIX : symétrique du bug de retour — la création d'un prêt fait passer
+    // l'actif hors du pool "disponible" (En service → En prêt). Sans ce recalcul,
+    // produits.stock restait à son ancienne valeur et affichait un disponible
+    // supérieur au nombre réel d'actifs réellement en service (règle métier
+    // explicitement interdite).
+    await syncStockDepuisActifs(actif.produit_id);
     render();
   } catch (err) {
     showToast('Erreur : ' + err.message, 'err');
