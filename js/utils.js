@@ -139,21 +139,7 @@ function getValeurTotaleProduit(produitId) {
 }
 
 // ─── CUMP (Coût Unitaire Moyen Pondéré) — Point 1 ─────────────
-function getCUMPProduit(produitId) {
-  const entrees  = (ST.mouvementsEntrees || []).filter(m => m.produit_id === produitId);
-  const totalQty = entrees.reduce((s, m) => s + (m.qty || 0), 0);
-  const totalVal = entrees.reduce((s, m) => s + (m.valeur || 0), 0);
-  if (totalQty <= 0) return 0;
-  return totalVal / totalQty;
-}
-
-// ─── Valeur du STOCK ACTUEL (Point 1) ─────────────────────────
-function getValeurStockActuel(produitId) {
-  const prod = ST.produits.find(p => p.id === produitId);
-  if (!prod || prod.is_amortissable) return 0;
-  return (prod.stock || 0) * getCUMPProduit(produitId);
-}
-
+// APRÈS
 // ─── CUMP (Coût Unitaire Moyen Pondéré) — Point 1 ─────────────
 // CUMP = valeur cumulée des entrées / quantité cumulée des entrées.
 // Sert de base de valorisation pour les sorties de produits NON

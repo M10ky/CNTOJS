@@ -252,10 +252,11 @@ window.exportUtilisateursCSV = () => {
 };
 
 // ─── Rapports — synthèse stock par catégorie ───
+// APRÈS
 window.exportRapportsCSV = () => {
   const headers = [
     'Département', 'Catégorie', 'Nb produits',
-    'Stock total', 'Valeur totale (MGA)',
+    'Stock total', 'Valeur totale (MGA) — CUMP, non-amort.',
     'Produits critiques ou en rupture'
   ];
   const rows = [];
@@ -267,7 +268,13 @@ window.exportRapportsCSV = () => {
     cats.forEach(cat => {
       const prods      = ST.produits.filter(p => p.dept === dept && p.categorie === cat);
       const stockTotal = prods.reduce((s, p) => s + p.stock, 0);
-      const valeur     = prods.reduce((s, p) => s + p.stock * (p.prix || 0), 0);
+      // FIX (cohérence des prix) : ancien calcul basé sur `p.prix` (champ
+      // catalogue manuel, quasi toujours à 0, jamais mis à jour par les
+      // mouvements réels) — remplacé par getValeurStockActuel(), déjà utilisée
+      // partout ailleurs (Dashboard, Rapports, Inventaire), basée sur le CUMP
+      // réel des entrées. Renvoie 0 pour les amortissables (valorisés via les
+      // actifs individuels, jamais mélangés ici).
+      const valeur     = prods.reduce((s, p) => s + getValeurStockActuel(p.id), 0);
       const critiques  = prods.filter(p => getStatus(p) !== 'Disponible').length;
       rows.push([dept, cat, prods.length, stockTotal, valeur, critiques]);
     });

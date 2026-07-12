@@ -112,9 +112,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 /* ═══════════════════════════════════════════
    TOPBAR UNIFIÉ — SEARCH + FILTER FUSIONNÉS
    ═══════════════════════════════════════════ */
+/* APRÈS */
 .topbar{
-  height:62px;background:var(--card);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;padding:0 20px;gap:12px;flex-shrink:0;
+  min-height:62px;background:var(--card);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;flex-wrap:wrap;row-gap:6px;
+  padding:10px 20px;gap:12px;flex-shrink:0;
 }
 .topbar-brand{display:flex;flex-direction:column;justify-content:center;flex-shrink:0}
 .topbar-title{font-size:14px;font-weight:700;color:var(--text);line-height:1.2}

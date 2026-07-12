@@ -193,13 +193,24 @@ window.submitMvt = async (typeStr) => {
       }
 
       // 1. Mise à jour du stock du produit
-      const { error: sErr } = await db.from('produits')
-        .update({
-          stock: typeStr === 'Entrée' ? prod.stock + qty : prod.stock - effectiveQty,
-          updated_at: tsNow
-        })
-        .eq('id', prodId);
-      if (sErr) throw sErr;
+      // APRÈS
+      // 1. Mise à jour du stock du produit — UNIQUEMENT pour les produits NON
+      // amortissables. Pour un produit amortissable, le stock n'est JAMAIS
+      // incrémenté/décrémenté ici par arithmétique manuelle : il est recalculé
+      // plus bas par syncStockDepuisActifs() à partir du compte réel d'actifs
+      // "En service" — même garde-fou que celui déjà appliqué dans prets.js et
+      // actifs.js. Avant ce correctif, submitMvt() restait le seul endroit du
+      // code à encore faire ce calcul manuel pour les actifs amortissables,
+      // ce qui perpétuait un éventuel écart au lieu de le corriger.
+      if (!prod.is_amortissable) {
+        const { error: sErr } = await db.from('produits')
+          .update({
+            stock: typeStr === 'Entrée' ? prod.stock + qty : prod.stock - effectiveQty,
+            updated_at: tsNow
+          })
+          .eq('id', prodId);
+        if (sErr) throw sErr;
+      }
 
       // 2. Insertion du mouvement principal (global — pas d'actif_id ici,
       //    sauf cas particulier d'une sortie amortissable d'un seul actif)
@@ -286,6 +297,15 @@ window.submitMvt = async (typeStr) => {
         showToast(`${typeStr} enregistrée — ${effectiveQty}× ${prod.nom}`);
       }
 
+      // APRÈS
+      // ← FIX (cohérence stock amortissable) : symétrique du garde-fou ajouté
+      // à l'étape 1 — pour une Entrée ou une Sortie sur un produit amortissable,
+      // le stock est désormais recalculé depuis les actifs réels, jamais fixé
+      // par une simple addition/soustraction.
+      if (prod.is_amortissable) {
+        await syncStockDepuisActifs(prodId);
+      }
+
       closeModal();
       await Promise.all([loadProduits(), loadMouvements(), loadMouvementsEntrees(), loadActifs()]);
       render();
@@ -337,16 +357,19 @@ window.submitAdd = async () => {
   } catch(err) { showToast('Erreur: '+err.message,'err'); }
 };
 
+// APRÈS
 window.submitEdit = async () => {
   const p=ST.modal.prod;
   const seuil  = parseInt(document.getElementById('f-edit-seuil')?.value)||p.seuil;
-  const prix   = parseInt(document.getElementById('f-edit-prix')?.value)||p.prix;
   const empl   = document.getElementById('f-edit-empl')?.value || p.emplacement;
   const valAch = parseInt(document.getElementById('f-edit-valach')?.value)||p.valeur_achat||0;
   const dtAch  = document.getElementById('f-edit-dtach')?.value || p.date_achat || null;
   const duree  = parseInt(document.getElementById('f-edit-duree')?.value)||p.duree_amortissement||36;
   try {
-    const { error } = await db.from('produits').update({ seuil, prix, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, updated_at:nowISO() }).eq('id',p.id);
+    // FIX : le champ catalogue "prix" n'est plus édité (cf. patch 4) — il
+    // n'est plus envoyé dans l'update pour ne jamais écraser silencieusement
+    // sa valeur en base avec un 0 fantôme issu d'un champ retiré du formulaire.
+    const { error } = await db.from('produits').update({ seuil, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, updated_at:nowISO() }).eq('id',p.id);
     if (error) throw error;
     closeModal(); showToast('Produit mis à jour');
     await loadProduits(); render();
@@ -796,11 +819,15 @@ function renderModal() {
     const taux=tauxLineaire(p.duree_amortissement);
     body=`
       <div class="form-row"><label class="form-lbl">Produit</label><input value="${p.nom}" disabled class="field-readonly" style="font-weight:700"></div>
-      <div class="form-3col">
+// APRÈS
+      <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Seuil critique</label><input id="f-edit-seuil" type="number" min="0" value="${p.seuil||5}"></div>
-        <div class="form-row"><label class="form-lbl">Prix unitaire (MGA)</label><input id="f-edit-prix" type="number" min="0" value="${p.prix||0}"></div>
         <div class="form-row"><label class="form-lbl">Emplacement</label><select id="f-edit-empl">${(ST.params.emplacements.length?ST.params.emplacements:['Stock Principal']).map(selEmpl).join('')}</select></div>
       </div>
+      ${!p.is_amortissable ? `<div class="info-banner" style="font-size:11.5px;margin-bottom:13px">
+        <i class="ti ti-info-circle"></i>
+        <div>Valeur du stock (CUMP) : <strong>${fmt(getCUMPProduit(p.id))} MGA / unité</strong> — calculée automatiquement depuis les entrées enregistrées, non modifiable manuellement.</div>
+      </div>` : ''}
       <div class="form-section-title">💰 Amortissement linéaire${taux?` — Taux : ${taux}%/an`:''}</div>
       <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Valeur d'achat (MGA)</label><input id="f-edit-valach" type="number" min="0" value="${p.valeur_achat||0}"></div>
@@ -852,8 +879,17 @@ window.onMvtFieldChange = async () => {
   const prixInp = document.getElementById('f-prix-unit');
 
   // Prix unitaire pré-rempli (modifiable pour entrée, readonly pour sortie)
-  if (prixInp && prod && !prixInp.dataset.userEdited) {
-    prixInp.value = prod.prix || 0;
+ // APRÈS
+  // FIX (cohérence des prix) : le champ Prix unitaire n'existe que sur le
+  // formulaire d'Entrée (jamais sur Sortie — cf. renderModal, branche !iE).
+  // La suggestion de préremplissage utilise désormais le CUMP réel (dernier
+  // coût moyen constaté sur les entrées), et non plus `prod.prix` — un champ
+  // catalogue déprécié, jamais mis à jour par les mouvements réels, retiré du
+  // formulaire d'édition produit (cf. patch 4). Reste une simple suggestion :
+  // l'utilisateur peut toujours la modifier (dataset.userEdited).
+  if (prixInp && prod && iE && !prixInp.dataset.userEdited) {
+    const cump = getCUMPProduit(prod.id);
+    prixInp.value = cump > 0 ? Math.round(cump) : (prod.prix || 0);
   }
 
   // Section numéros de série : uniquement pour les entrées amortissables
