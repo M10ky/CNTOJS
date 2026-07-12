@@ -151,6 +151,7 @@ window.submitMvt = async (typeStr) => {
     if (prod.stock < qty) { showToast(`Stock insuffisant (${prod.stock} disponible)`, 'err'); return; }
   } else if (typeStr === 'Entrée') {
     if (qty <= 0) { showToast('Quantité invalide','err'); return; }
+    if (prixUnit <= 0) { showToast('Le prix unitaire est obligatoire pour une entrée','err'); return; }
   }
 
   const effectiveQty = selectedActifIds.length > 0 ? selectedActifIds.length : qty;
@@ -211,7 +212,10 @@ window.submitMvt = async (typeStr) => {
           produit_id: prodId,
           produit_nom: prod.nom,
           qty: effectiveQty,
-          valeur: effectiveQty * (typeStr === 'Entrée' ? prixUnit : (prod.prix || 0)),
+          // FIX (Point 1) : la sortie d'un produit non-amortissable est valorisée
+          // au CUMP réel (coût moyen des entrées), plus jamais via `prod.prix`
+          // (champ manuel, rarement configuré, déconnecté des prix d'entrée réels).
+          valeur: effectiveQty * (typeStr === 'Entrée' ? prixUnit : getCUMPProduit(prodId)),
           dept,
           user_name: user,
           user_id: userId,
@@ -665,14 +669,19 @@ function renderModal() {
         <select id="f-prod" onchange="onMvtFieldChange()">
           <option value="">— Sélectionner un produit ${dept} actif —</option>${prodOpts}
         </select></div>
+      ${iE ? `
       <div id="f-qty-wrap" class="form-2col">
         <div class="form-row"><label class="form-lbl">Quantité <span class="req">*</span></label>
           <input id="f-qty" type="number" min="1" value="1" oninput="onMvtFieldChange()"></div>
         <div class="form-row">
-          <label class="form-lbl">Prix unit. (MGA)${iE?'&nbsp;<span class="req">*</span>':''}</label>
+          <label class="form-lbl">Prix unit. (MGA) <span class="req">*</span></label>
           <input id="f-prix-unit" type="number" min="0" placeholder="0"
-            ${!iE?'readonly class="field-readonly"':'oninput="this.dataset.userEdited=\'1\'"'}></div>
-      </div>
+            oninput="this.dataset.userEdited='1'"></div>
+      </div>` : `
+      <div id="f-qty-wrap" class="form-row">
+        <label class="form-lbl">Quantité <span class="req">*</span></label>
+        <input id="f-qty" type="number" min="1" value="1" oninput="onMvtFieldChange()">
+      </div>`}
       ${!iE ? `<div id="f-actif-sortie-wrap"></div>` : ''}
       <div class="form-row">
         <label class="form-lbl">Opération réalisée par</label>
@@ -687,36 +696,42 @@ function renderModal() {
           <i class="ti ti-lock" style="margin-left:auto;color:var(--text3);font-size:14px" title="Auteur verrouillé sur le compte connecté"></i>
         </div>
       </div>
-      ${iE
-        ? `<div class="form-2col">
-            <div class="form-row"><label class="form-lbl">Fournisseur</label>
-              <select id="f-fournisseur">
-                <option value="">— Sélectionner ou laisser vide —</option>
-                ${(ST.params.fournisseurs||[]).map(f=>`<option value="${escQ(f)}">${f}</option>`).join('')}
-              </select></div>
-            <div class="form-row"><label class="form-lbl">Réf. / N° facture</label>
-              <input id="f-ref-doc" placeholder="BL-2026-XXXX…"></div>
-          </div>
-          <div class="form-row"><label class="form-lbl">Emplacement</label>
-            <select id="f-empl">${emplOpts}</select></div>
-          <div id="f-serials-section" style="display:none">
-            <div class="form-section-title">🔢 Numéros de série
-              <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">(produit amortissable)</span>
-            </div>
-            <div class="info-banner" style="margin-bottom:8px;font-size:11.5px">
-              <i class="ti ti-info-circle"></i>
-              <div>Saisissez <strong id="f-serials-count">1</strong> numéro(s), un par ligne.
-                Les suggestions peuvent être modifiées librement.</div>
-            </div>
-            <div class="form-row">
-              <textarea id="f-serials" rows="3"
-                placeholder="Un numéro par ligne…"
-                oninput="this.dataset.userEdited='1'"
-                style="font-family:var(--mono);font-size:11.5px;resize:vertical"></textarea>
-            </div>
-          </div>`
-        : `<div class="form-row"><label class="form-lbl">Destination <span class="req">*</span></label><select id="f-dest"><option value="">— Sélectionner —</option>${destOpts}</select></div>`}
-      <input type="hidden" id="f-dest" value="">
+      ${iE ? `
+      <div class="form-2col">
+        <div class="form-row"><label class="form-lbl">Fournisseur</label>
+          <select id="f-fournisseur">
+            <option value="">— Sélectionner ou laisser vide —</option>
+            ${(ST.params.fournisseurs||[]).map(f=>`<option value="${escQ(f)}">${f}</option>`).join('')}
+          </select></div>
+        <div class="form-row"><label class="form-lbl">Réf. / N° facture</label>
+          <input id="f-ref-doc" placeholder="BL-2026-XXXX…"></div>
+      </div>
+      <div class="form-row"><label class="form-lbl">Emplacement</label>
+        <select id="f-empl">${emplOpts}</select></div>
+      <div id="f-serials-section" style="display:none">
+        <div class="form-section-title">🔢 Numéros de série
+          <span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:6px">(produit amortissable)</span>
+        </div>
+        <div class="info-banner" style="margin-bottom:8px;font-size:11.5px">
+          <i class="ti ti-info-circle"></i>
+          <div>Saisissez <strong id="f-serials-count">1</strong> numéro(s), un par ligne.
+            Les suggestions peuvent être modifiées librement.</div>
+        </div>
+        <div class="form-row">
+          <textarea id="f-serials" rows="3"
+            placeholder="Un numéro par ligne…"
+            oninput="this.dataset.userEdited='1'"
+            style="font-family:var(--mono);font-size:11.5px;resize:vertical"></textarea>
+        </div>
+      </div>` : `
+      <div class="form-row"><label class="form-lbl">Destination <span class="req">*</span></label>
+        <select id="f-dest"><option value="">— Sélectionner —</option>${destOpts}</select></div>
+      <div class="form-2col">
+        <div class="form-row"><label class="form-lbl">Emplacement</label>
+          <select id="f-empl">${emplOpts}</select></div>
+        <div class="form-row"><label class="form-lbl">Réf. / N° document</label>
+          <input id="f-ref-doc" placeholder="BS-2026-XXXX…"></div>
+      </div>`}
       <div class="form-row"><label class="form-lbl">Observation</label><input id="f-obs" placeholder="Précisions…"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
@@ -918,7 +933,7 @@ function prodTable(prods, dept, color) {
   // "produit" n'a plus de sens ici. La VNC par actif individuel reste disponible et
   // pertinente dans l'onglet Actifs (actifs.js → renderActifs).
   const hdrs=['ID','Produit','Catégorie','Emplacement','Stock','Seuil'];
-  if (showP) hdrs.push('Valeur Cumulée Entrées');
+  if (showP) hdrs.push('Valeur Stock (CUMP)');
   hdrs.push('Statut');
   if (canM) hdrs.push('Actions');
 
@@ -944,8 +959,14 @@ const rows = allFiltered.map(p => {
     <td style="color:var(--text3)">${p.seuil}</td>`;
 
   if (showP) {
-    const vCumul = getValeurTotaleProduit(p.id);  // ← Étape D+
-    html += `<td style="font-weight:700">${fmt(vCumul)} MGA</td>`;
+    // Point 1 : produit amortissable → valorisation exclusivement dans le
+    // module Actifs (VNC par unité) ; jamais mélangée à la valeur du stock.
+    const vStock = p.is_amortissable ? null : getValeurStockActuel(p.id);
+    html += `<td style="font-weight:700">${
+      vStock !== null
+        ? fmt(vStock) + ' MGA'
+        : '<span style="color:var(--text3);font-size:11px">Voir Actifs</span>'
+    }</td>`;
   }
 
   // === COLONNE STATUT + ACTIF (corrigée) ===
@@ -980,7 +1001,7 @@ const rows = allFiltered.map(p => {
   const nbActif   = prods.filter(p=>isActif(p)).length;
   const nbInactif = prods.length - nbActif;
   const headerInfo = showP
-    ? `${allFiltered.length} référence(s) · Valeur cumulée: ${fmt(allFiltered.filter(p=>isActif(p)).reduce((s,p)=>s+getValeurTotaleProduit(p.id),0))} MGA${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`
+    ? `${allFiltered.length} référence(s) · Valeur Stock (CUMP): ${fmt(allFiltered.filter(p=>isActif(p)).reduce((s,p)=>s+getValeurStockActuel(p.id),0))} MGA${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`
     : `${allFiltered.length} référence(s)${nbInactif>0?` · <span style="color:#94a3b8;font-weight:400">${nbInactif} inactif${nbInactif>1?'s':''}</span>`:''}`;
 
   return `${searchBar}<div class="card">
@@ -1000,23 +1021,23 @@ const rows = allFiltered.map(p => {
 // ═══ RENDER PAGES STOCK ═══
 function renderStockIT() {
   const allIT = ST.produits.filter(p => p.dept === 'IT');
-  const v = allIT.filter(p => isActif(p)).reduce((s, p) => s + getValeurTotaleProduit(p.id), 0);
+  const v = allIT.filter(p => isActif(p)).reduce((s, p) => s + getValeurStockActuel(p.id), 0);
   const totalRefs = allIT.length;
   const inactifs = allIT.filter(p => !isActif(p)).length;
 
   return `<p class="page-title">Inventaire IT</p>
-    <p class="page-sub">${canSeePrix() ? `Valeur totale (actifs) : ${fmt(v)} MGA · ` : ''}${totalRefs} référence${totalRefs>1?'s':''}${inactifs ? ` <span style="color:#94a3b8">(${inactifs} inactif${inactifs>1?'s':''})</span>` : ''}</p>
+    <p class="page-sub">${canSeePrix() ? `Valeur Stock (CUMP) : ${fmt(v)} MGA · ` : ''}${totalRefs} référence${totalRefs>1?'s':''}${inactifs ? ` <span style="color:#94a3b8">(${inactifs} inactif${inactifs>1?'s':''})</span>` : ''}</p>
     ${prodTable(allIT, 'IT', '#4f46e5')}`;
 }
 
 function renderStockFin() {
   const allFin = ST.produits.filter(p => p.dept === 'Finance');
-  const v = allFin.filter(p => isActif(p)).reduce((s, p) => s + getValeurTotaleProduit(p.id), 0);
+  const v = allFin.filter(p => isActif(p)).reduce((s, p) => s + getValeurStockActuel(p.id), 0);
   const totalRefs = allFin.length;
   const inactifs = allFin.filter(p => !isActif(p)).length;
 
   return `<p class="page-title">Inventaire Finance</p>
-    <p class="page-sub">${canSeePrix() ? `Valeur totale (actifs) : ${fmt(v)} MGA · ` : ''}${totalRefs} référence${totalRefs>1?'s':''}${inactifs ? ` <span style="color:#94a3b8">(${inactifs} inactif${inactifs>1?'s':''})</span>` : ''}</p>
+    <p class="page-sub">${canSeePrix() ? `Valeur Stock (CUMP) : ${fmt(v)} MGA · ` : ''}${totalRefs} référence${totalRefs>1?'s':''}${inactifs ? ` <span style="color:#94a3b8">(${inactifs} inactif${inactifs>1?'s':''})</span>` : ''}</p>
     ${prodTable(allFin, 'Finance', '#10b981')}`;
 }
 

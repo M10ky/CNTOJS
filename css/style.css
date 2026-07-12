@@ -122,16 +122,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 /* ── BARRE UNIFIÉE ── */
 .topbar-unified{
-  flex:1;display:flex;align-items:center;
+  flex:1;display:flex;flex-wrap:wrap;align-items:center;
   background:#f8fafc;
   border:1.5px solid var(--border);
   border-radius:11px;
   padding:0;
-  overflow:hidden;
+  overflow:visible;
   transition:border-color .15s, box-shadow .15s;
   min-width:0;
   max-width:780px;
   margin:0 auto;
+  row-gap:4px;
 }
 .topbar-unified:focus-within{
   border-color:var(--teal);
@@ -142,7 +143,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 /* Section recherche */
 .tub-search{
   display:flex;align-items:center;gap:8px;
-  padding:0 12px;flex:1;min-width:160px;cursor:pointer;
+  padding:0 12px;flex:1 1 200px;min-width:160px;cursor:pointer;
   height:38px;
 }
 .tub-search i{font-size:15px;color:var(--text3);flex-shrink:0}
@@ -162,7 +163,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 /* Section filtre date */
 .tub-filter{
   display:flex;align-items:center;gap:6px;
-  padding:0 10px;flex-shrink:0;height:38px;
+  padding:0 10px;flex:0 1 auto;flex-wrap:wrap;height:auto;min-height:38px;
 }
 .tub-filter-icon{
   display:flex;align-items:center;justify-content:center;
@@ -183,7 +184,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 /* Séparateur + boutons d'action */
 .tub-actions{
   display:flex;align-items:center;gap:4px;
-  padding:0 7px;height:38px;flex-shrink:0;
+  padding:0 7px;height:38px;flex:0 0 auto;
 }
 .tub-btn{
   display:inline-flex;align-items:center;justify-content:center;
@@ -448,10 +449,16 @@ mark.hl{background:rgba(0,201,167,.2);color:var(--teal-d);border-radius:2px;padd
   .topbar-right-actions{order:2}
   .tub-filter-group .tub-filter-label{display:none;}
   .tub-filter input[type="datetime-local"]{width:130px;}
+  /* Point 4 : au lieu de se chevaucher, recherche/filtres/actions se
+     répartissent sur des lignes propres à l'intérieur de la barre unifiée. */
+  .tub-search{flex:1 1 100%;order:1;}
+  .tub-sep{order:2;width:100%;height:1px;margin:2px 0;}
+  .tub-filter{order:3;flex:1 1 auto;}
+  .tub-actions{order:4;flex:0 0 auto;}
 }
-@media (max-width:700px){
-  .tub-filter{display:none;}        /* masque les dates sur mobile */
-  .tub-sep:nth-child(2){display:none;}
+@media (max-width:520px){
+  .tub-filter{display:none;}        /* masque les dates uniquement sur très petit écran */
+  .tub-sep{display:none;}
 }
 .no-result-row td{text-align:center;padding:32px 20px!important;color:var(--text3)}
 .no-result-row .nri{font-size:28px;margin-bottom:8px}

@@ -77,7 +77,7 @@ window.exportProduitsCSV = (dept) => {
   ];
   if (showP) {
     headers.push(
-      'Valeur cumulée entrées (MGA)',  // ← Étape D+
+      'Valeur Stock CUMP (MGA)',   // ← Point 1 : aligné sur la colonne écran
       'Valeur achat (MGA)', 'Date achat',
       'Durée amort. (mois)'
     );
@@ -90,7 +90,7 @@ window.exportProduitsCSV = (dept) => {
     ];
     if (showP) {
       row.push(
-        getValeurTotaleProduit(p.id),  // ← Étape D+
+        p.is_amortissable ? '' : getValeurStockActuel(p.id),  // ← Point 1
         p.valeur_achat || 0,
         p.date_achat   || '',
         p.duree_amortissement || ''

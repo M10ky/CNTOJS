@@ -44,7 +44,7 @@ const TRANSITIONS_PRET = Object.freeze({
   [STATUS_PRET.EN_COURS]:  [STATUS_PRET.RETOURNE, STATUS_PRET.PERDU],
   [STATUS_PRET.EN_RETARD]: [STATUS_PRET.RETOURNE, STATUS_PRET.PERDU],
   [STATUS_PRET.RETOURNE]:  [],   // terminal
-  [STATUS_PRET.PERDU]:     [],   // terminal
+  [STATUS_PRET.PERDU]:     [STATUS_PRET.RETOURNE],  // ← réversible : matériel retrouvé (rpc_retrouver_actif)
 });
 
 const TRANSITIONS_ACTIF = Object.freeze({

@@ -138,6 +138,46 @@ function getValeurTotaleProduit(produitId) {
     .reduce((s, m) => s + (m.valeur || 0), 0);
 }
 
+// ─── CUMP (Coût Unitaire Moyen Pondéré) — Point 1 ─────────────
+function getCUMPProduit(produitId) {
+  const entrees  = (ST.mouvementsEntrees || []).filter(m => m.produit_id === produitId);
+  const totalQty = entrees.reduce((s, m) => s + (m.qty || 0), 0);
+  const totalVal = entrees.reduce((s, m) => s + (m.valeur || 0), 0);
+  if (totalQty <= 0) return 0;
+  return totalVal / totalQty;
+}
+
+// ─── Valeur du STOCK ACTUEL (Point 1) ─────────────────────────
+function getValeurStockActuel(produitId) {
+  const prod = ST.produits.find(p => p.id === produitId);
+  if (!prod || prod.is_amortissable) return 0;
+  return (prod.stock || 0) * getCUMPProduit(produitId);
+}
+
+// ─── CUMP (Coût Unitaire Moyen Pondéré) — Point 1 ─────────────
+// CUMP = valeur cumulée des entrées / quantité cumulée des entrées.
+// Sert de base de valorisation pour les sorties de produits NON
+// amortissables (remplace l'ancien repli sur produits.prix, un champ
+// manuel déconnecté des prix d'entrée réels).
+function getCUMPProduit(produitId) {
+  const entrees  = (ST.mouvementsEntrees || []).filter(m => m.produit_id === produitId);
+  const totalQty = entrees.reduce((s, m) => s + (m.qty || 0), 0);
+  const totalVal = entrees.reduce((s, m) => s + (m.valeur || 0), 0);
+  if (totalQty <= 0) return 0;
+  return totalVal / totalQty;
+}
+
+// ─── Valeur du STOCK ACTUEL (Point 1) ─────────────────────────
+// stock présent × CUMP — uniquement pour les produits NON amortissables.
+// Les produits amortissables renvoient 0 ici : leur valorisation (VNC) est
+// gérée exclusivement dans le module Actifs (calcVNC), jamais mélangée à la
+// valeur du stock catalogue — conformément à la règle métier du point 1.
+function getValeurStockActuel(produitId) {
+  const prod = ST.produits.find(p => p.id === produitId);
+  if (!prod || prod.is_amortissable) return 0;
+  return (prod.stock || 0) * getCUMPProduit(produitId);
+}
+
 const statusTag = s => s==='Rupture'
   ? `<span class="tag" style="color:#dc2626;background:#fef2f2">● Rupture</span>`
   : s==='Critique'

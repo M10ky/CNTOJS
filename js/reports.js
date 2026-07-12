@@ -1,10 +1,105 @@
 'use strict';
 
+// ═══════════════════════════════════════════════════════════════
+//   HELPERS — RAPPORTS (Point 3)
+// ═══════════════════════════════════════════════════════════════
+
+function getProduitsNonAmort() {
+  return ST.produits.filter(p => !p.is_amortissable);
+}
+function getProduitsVisibles() {
+  return ST.produits.filter(p => (canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance'));
+}
+
+/** Validé / (Validé + Refusé) — "En attente" exclu du calcul, conformément à la confirmation. */
+function tauxValidationGlobal(dem) {
+  const valide = dem.filter(d => d.statut === 'Validé').length;
+  const refuse = dem.filter(d => d.statut === 'Refusé').length;
+  const total  = valide + refuse;
+  return total ? Math.round(valide / total * 100) : 0;
+}
+
+/** Top N produits par quantité + valeur sortie — basé sur les mouvements de la PÉRIODE sélectionnée. */
+function topProduitsDistribues(mvtSortie, n = 10) {
+  const map = {};
+  mvtSortie.forEach(m => {
+    if (!map[m.produit_id]) map[m.produit_id] = { id: m.produit_id, nom: m.produit_nom, qty: 0, valeur: 0 };
+    map[m.produit_id].qty    += (m.qty || 0);
+    map[m.produit_id].valeur += (m.valeur || 0);
+  });
+  return Object.values(map).sort((a, b) => b.qty - a.qty).slice(0, n);
+}
+
+/** Top N produits les plus coûteux : CUMP×stock pour non-amortissables,
+ *  somme des valeur_achat des actifs actifs (En service/En prêt) pour amortissables. */
+function topProduitsCouteux(n = 10) {
+  return getProduitsVisibles().map(p => {
+    const valeur = p.is_amortissable
+      ? (ST.actifs || []).filter(a => a.produit_id === p.id && (a.statut === 'En service' || a.statut === 'En prêt'))
+          .reduce((s, a) => s + (a.valeur_achat || 0), 0)
+      : getValeurStockActuel(p.id);
+    return { nom: p.nom, dept: p.dept, valeur, amort: !!p.is_amortissable };
+  }).filter(x => x.valeur > 0).sort((a, b) => b.valeur - a.valeur).slice(0, n);
+}
+
+function repartitionActifsStatut() {
+  const statuts = ['En service', 'En prêt', 'Hors service', 'Sorti', 'Réformé'];
+  const visibles = (ST.actifs || []).filter(a => (canManIT() && a.dept === 'IT') || (canManFin() && a.dept === 'Finance'));
+  return statuts.map(s => ({ statut: s, n: visibles.filter(a => a.statut === s).length }));
+}
+
+/** Évolution de la valeur du stock (non-amortissables uniquement) sur N mois,
+ *  reconstituée depuis l'historique des mouvements (Entrée:+valeur, Sortie:-valeur). */
+function evolutionValeurStock(nbMois = 6) {
+  const nonAmortIds = new Set(getProduitsNonAmort().filter(p => (canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance')).map(p => p.id));
+  const mvt = (ST.mouvements || []).filter(m => nonAmortIds.has(m.produit_id))
+    .sort((a, b) => new Date(a.created_at || a.date) - new Date(b.created_at || b.date));
+  const today = new Date();
+  const months = [];
+  for (let i = nbMois - 1; i >= 0; i--) months.push(new Date(today.getFullYear(), today.getMonth() - i, 1));
+  return months.map(mDate => {
+    const nextMonth = new Date(mDate.getFullYear(), mDate.getMonth() + 1, 1);
+    const val = mvt.filter(m => new Date(m.created_at || m.date) < nextMonth)
+      .reduce((s, m) => s + (m.type === 'Entrée' ? (m.valeur || 0) : -(m.valeur || 0)), 0);
+    return { label: mDate.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }), val: Math.max(0, val) };
+  });
+}
+
+function produitsSansMouvement90j() {
+  const seuil = new Date(); seuil.setDate(seuil.getDate() - 90);
+  return getProduitsVisibles().filter(p => {
+    const mvts = (ST.mouvements || []).filter(m => m.produit_id === p.id);
+    if (!mvts.length) return true;
+    const derniere = mvts.reduce((max, m) => { const d = new Date(m.created_at || m.date); return d > max ? d : max; }, new Date(0));
+    return derniere < seuil;
+  });
+}
+
+function coutMoyenSorties(mvtSortie) {
+  const totalQty = mvtSortie.reduce((s, m) => s + (m.qty || 0), 0);
+  const totalVal = mvtSortie.reduce((s, m) => s + (m.valeur || 0), 0);
+  return totalQty ? totalVal / totalQty : 0;
+}
+
+function valeurMoyenneParCategorie() {
+  const cats = {};
+  getProduitsNonAmort().filter(p => (canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance')).forEach(p => {
+    const cat = p.categorie || '—';
+    if (!cats[cat]) cats[cat] = { total: 0, n: 0 };
+    cats[cat].total += getValeurStockActuel(p.id);
+    cats[cat].n += 1;
+  });
+  return Object.entries(cats).map(([cat, { total, n }]) => ({ cat, total, n, moyenne: n ? total / n : 0 }))
+    .sort((a, b) => b.total - a.total);
+}
+
 // ═══ DASHBOARD ═══
 function renderDashboard() {
-  // ← Étape D+ : valeur = cumul de toutes les entrées (via ST.mouvementsEntrees)
-  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
-  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
+  // Point 1 : valeur du stock global = stock actuel × CUMP, produits non
+  // amortissables uniquement (les amortissables sont valorisés via leur VNC
+  // dans le module Actifs — jamais mélangés ici).
+  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
+  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
   const alIT=alertsIT().length, alFin=alertsFin().length;
   const showP=canSeePrix();
   const kpis=[];
@@ -43,31 +138,119 @@ function renderDashboard() {
       </table></div></div>`:''}`;
 }
 
-// ── RAPPORTS ──
+// ── RAPPORTS — TABLEAU DE BORD DÉCISIONNEL (Point 3) ──
 function renderRapports() {
-  const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
-  const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
-  const demIT=ST.demandes.filter(d=>d.dept==='IT');
-  const demFin=ST.demandes.filter(d=>d.dept==='Finance');
-  const tIT=demIT.length?Math.round(demIT.filter(d=>d.statut==='Validé').length/demIT.length*100):0;
-  const tFin=demFin.length?Math.round(demFin.filter(d=>d.statut==='Validé').length/demFin.length*100):0;
-  const kpis=[
-    {lbl:'Valeur Stock IT',val:fmt(vIT)+' MGA',c:'#4f46e5'},{lbl:'Valeur Stock Finance',val:fmt(vFin)+' MGA',c:'#10b981'},
-    {lbl:'Taux validation IT',val:tIT+'%',c:'#f59e0b'},{lbl:'Taux validation Finance',val:tFin+'%',c:'#f59e0b'},
-    {lbl:'Mouvements IT',val:fMvtIT().length,s:`${fMvtIT().reduce((s,m)=>s+m.qty,0)} unités`,c:'#4f46e5'},
-    {lbl:'Mouvements Finance',val:fMvtFin().length,s:`${fMvtFin().reduce((s,m)=>s+m.qty,0)} unités`,c:'#10b981'},
-    {lbl:'Produits critiques IT',val:alertsIT().length,c:'#ef4444'},{lbl:'Produits critiques Finance',val:alertsFin().length,c:'#ef4444'},
+  const prodsVisibles = getProduitsVisibles();
+  const vIT  = ST.produits.filter(p => p.dept === 'IT').reduce((s, p) => s + getValeurStockActuel(p.id), 0);
+  const vFin = ST.produits.filter(p => p.dept === 'Finance').reduce((s, p) => s + getValeurStockActuel(p.id), 0);
+
+  const mvtPeriode  = [...fMvtIT(), ...fMvtFin()];
+  const entreesP    = mvtPeriode.filter(m => m.type === 'Entrée');
+  const sortiesP    = mvtPeriode.filter(m => m.type === 'Sortie');
+  const valEntreesP = entreesP.reduce((s, m) => s + (m.valeur || 0), 0);
+  const valSortiesP = sortiesP.reduce((s, m) => s + (m.valeur || 0), 0);
+
+  const demVisibles  = [...fDemIT(), ...fDemFin()];
+  const tauxValid    = tauxValidationGlobal(demVisibles);
+  const nbAttente    = demVisibles.filter(d => d.statut === 'En attente').length;
+
+  const nbProduits   = prodsVisibles.length;
+  const nbUnites     = prodsVisibles.reduce((s, p) => s + (p.stock || 0), 0);
+  const nbCritiques  = alertsIT().length + alertsFin().length;
+  const nbAmort      = prodsVisibles.filter(p => p.is_amortissable).length;
+
+  // ── KPIs ──────────────────────────────────────────────────
+  const kpis = [
+    { lbl: 'Valeur Stock IT',            val: fmt(vIT) + ' MGA',        s: 'Non-amortissables (CUMP)', c: '#4f46e5' },
+    { lbl: 'Valeur Stock Finance',       val: fmt(vFin) + ' MGA',       s: 'Non-amortissables (CUMP)', c: '#10b981' },
+    { lbl: 'Produits (total)',           val: nbProduits,               s: `${nbAmort} amortissable(s)`, c: '#64748b' },
+    { lbl: 'Unités en stock',            val: fmt(nbUnites),            s: 'toutes références',        c: '#0ea5e9' },
+    { lbl: 'Mouvements (période)',       val: mvtPeriode.length,        s: `${entreesP.length} entrée(s) · ${sortiesP.length} sortie(s)`, c: '#6366f1' },
+    { lbl: 'Valeur Entrées (période)',   val: fmt(valEntreesP) + ' MGA',s: 'coût d\'acquisition',      c: '#16a34a' },
+    { lbl: 'Valeur Sorties (période)',   val: fmt(valSortiesP) + ' MGA',s: 'valorisées au CUMP',       c: '#dc2626' },
+    { lbl: 'Produits critiques',         val: nbCritiques,              s: 'sous seuil ou rupture',    c: '#ef4444' },
+    { lbl: 'Produits amortissables',     val: nbAmort,                  s: 'suivi individuel actif',   c: '#7c3aed' },
+    { lbl: 'Demandes en attente',        val: nbAttente,                s: 'à traiter',                c: '#f59e0b' },
+    { lbl: 'Taux de validation',         val: tauxValid + '%',          s: 'Validé / (Validé+Refusé)', c: '#f59e0b' },
   ];
+
+  // ── Analyse détaillée ───────────────────────────────────────
+  const valMoyCat   = valeurMoyenneParCategorie();
+  const coutMoySortie= coutMoyenSorties(sortiesP);
+  const sansMvt      = produitsSansMouvement90j();
+  const dernieres    = [...mvtPeriode].sort((a,b)=>new Date(b.created_at||b.date)-new Date(a.created_at||a.date)).slice(0,8);
+  const nbActifsProd = prodsVisibles.filter(p=>isActif(p)).length;
+  const nbInactifsProd = nbProduits - nbActifsProd;
+
+  const catMoyRows = valMoyCat.slice(0,8).map(c => `<tr>
+    <td style="font-weight:600">${c.cat}</td>
+    <td style="color:var(--text3)">${c.n}</td>
+    <td style="font-weight:700">${fmt(c.total)} MGA</td>
+    <td>${fmt(Math.round(c.moyenne))} MGA</td>
+  </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:16px">Aucune donnée</td></tr>`;
+
+  const sansMvtRows = sansMvt.slice(0,10).map(p => `<tr>
+    <td>${deptTag(p.dept)}</td>
+    <td style="font-weight:600">${p.nom}</td>
+    <td><span class="tag" style="color:#475569;background:#f1f5f9">${p.categorie}</span></td>
+    <td style="color:var(--text3)">${p.stock}</td>
+  </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:16px">Aucun produit dormant</td></tr>`;
+
+  const dernieresRows = dernieres.map(m => `<tr>
+    <td>${fmtDTSplit(m.created_at||m.date)}</td>
+    <td>${deptTag(m.dept)}</td>
+    <td>${typeBadge(m.type)}</td>
+    <td style="font-weight:500">${m.produit_nom}</td>
+    <td style="font-weight:700">${m.qty}</td>
+    <td style="font-weight:700">${fmt(m.valeur)} MGA</td>
+  </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Aucun mouvement sur la période</td></tr>`;
+
   return `<p class="page-title">Rapports & Statistiques</p>
-    <p class="page-sub">Synthèse globale — période sélectionnée</p>
-    <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div>${k.s?`<div class="kpi-s">${k.s}</div>`:''}</div>`).join('')}</div>
+    <p class="page-sub">Tableau de bord décisionnel — période sélectionnée</p>
+
+    <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s||''}</div></div>`).join('')}</div>
+
     <div class="charts-grid">
-      <div class="chart-card"><div class="chart-ttl">Stock IT par catégorie</div><div class="bar-chart-wrap"><canvas id="chart-cat-it"></canvas></div></div>
-      <div class="chart-card"><div class="chart-ttl">Stock Finance par catégorie</div><div class="bar-chart-wrap"><canvas id="chart-cat-fin"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Valeur du stock par catégorie (non-amortissables)</div><div class="bar-chart-wrap"><canvas id="chart-rap-cat-valeur"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Entrées vs Sorties — 6 derniers mois</div><div class="bar-chart-wrap"><canvas id="chart-rap-evol-mensuel"></canvas></div></div>
     </div>
     <div class="charts-grid">
-      <div class="chart-card"><div class="chart-ttl">Top emplacements — Valeur (M MGA)</div><div class="bar-chart-wrap"><canvas id="chart-empl"></canvas></div></div>
-      <div class="chart-card"><div class="chart-ttl">Évolution mouvements — 30 jours</div><div class="bar-chart-wrap"><canvas id="chart-mvt-30"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Top 10 produits les plus distribués (période)</div><div class="bar-chart-wrap"><canvas id="chart-rap-top-distrib"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Top 10 produits les plus coûteux</div><div class="bar-chart-wrap"><canvas id="chart-rap-top-couteux"></canvas></div></div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-card"><div class="chart-ttl">Actifs amortissables par statut</div><div class="bar-chart-wrap"><canvas id="chart-rap-actifs-statut"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Évolution de la valeur du stock (6 mois)</div><div class="bar-chart-wrap"><canvas id="chart-rap-evol-valeur"></canvas></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-chart-bar" style="color:var(--teal)"></i>Analyse détaillée</span></div>
+      <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;border-bottom:1px solid var(--border)">
+        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Coût moyen des sorties</div><div style="font-size:18px;font-weight:800;margin-top:4px">${fmt(Math.round(coutMoySortie))} MGA</div></div>
+        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Produits actifs / inactifs</div><div style="font-size:18px;font-weight:800;margin-top:4px">${nbActifsProd} / ${nbInactifsProd}</div></div>
+        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Produits sans mouvement &gt;90j</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:${sansMvt.length?'#f59e0b':'#16a34a'}">${sansMvt.length}</div></div>
+      </div>
+      <div style="padding:16px;border-bottom:1px solid var(--border)">
+        <div class="chart-ttl" style="margin-bottom:8px">Valeur moyenne par catégorie</div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Catégorie</th><th>Nb produits</th><th>Valeur totale</th><th>Valeur moyenne</th></tr></thead>
+          <tbody>${catMoyRows}</tbody>
+        </table></div>
+      </div>
+      <div style="padding:16px;border-bottom:1px solid var(--border)">
+        <div class="chart-ttl" style="margin-bottom:8px">Produits sans mouvement depuis plus de 90 jours</div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Dépt</th><th>Produit</th><th>Catégorie</th><th>Stock</th></tr></thead>
+          <tbody>${sansMvtRows}</tbody>
+        </table></div>
+      </div>
+      <div style="padding:16px">
+        <div class="chart-ttl" style="margin-bottom:8px">Dernières entrées / sorties (période)</div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Date & Heure</th><th>Dépt</th><th>Type</th><th>Produit</th><th>Qté</th><th>Valeur</th></tr></thead>
+          <tbody>${dernieresRows}</tbody>
+        </table></div>
+      </div>
     </div>`;
 }
 
@@ -152,8 +335,8 @@ function drawCharts() {
     new Chart(document.getElementById('chart-mvt'),{type:'bar',data:{labels:dates.map(d=>new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),datasets:[{label:'Entrées',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Entrée').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#10b981',borderRadius:4},{label:'Sorties',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Sortie').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#ef4444',borderRadius:4}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
   if (document.getElementById('chart-pie')) {
-    const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
-    const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurTotaleProduit(p.id),0);
+    const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
+    const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
     const data=[],labels=[],colors=[];
     if (canSeeIT())  { data.push(Math.round(vIT/1e6));  labels.push('IT');      colors.push('#4f46e5'); }
     if (canSeeFin()) { data.push(Math.round(vFin/1e6)); labels.push('Finance'); colors.push('#10b981'); }
@@ -190,5 +373,43 @@ function drawCharts() {
     const partial=w.filter(p=>{const pct=amortPct(p);return pct!==null&&pct>50&&pct<100;}).length;
     const low=w.filter(p=>{const pct=amortPct(p);return pct!==null&&pct<=50;}).length;
     new Chart(document.getElementById('chart-amort-pie'),{type:'doughnut',data:{labels:['Faible <50%','Partiel 50–99%','Totalement amorti'],datasets:[{data:[low,partial,fully],backgroundColor:['#10b981','#f59e0b','#ef4444'],borderWidth:0,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:9}}}}});
+  }
+
+  // ═══ NOUVEAUX GRAPHIQUES — RAPPORTS (Point 3) ═══
+  if (document.getElementById('chart-rap-cat-valeur')) {
+    const data = valeurMoyenneParCategorie().slice(0,8);
+    new Chart(document.getElementById('chart-rap-cat-valeur'),{type:'bar',data:{labels:data.map(c=>c.cat),datasets:[{data:data.map(c=>Math.round(c.total/1e3)),backgroundColor:'#4f46e5',borderRadius:4}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9},callback:v=>v+'K'},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
+  }
+  if (document.getElementById('chart-rap-evol-mensuel')) {
+    const today=new Date(); const months=[];
+    for(let i=5;i>=0;i--) months.push(new Date(today.getFullYear(), today.getMonth()-i, 1));
+    const all=[...ST.mouvements];
+    const labels=months.map(d=>d.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}));
+    const entrees=months.map(mDate=>{
+      const next=new Date(mDate.getFullYear(),mDate.getMonth()+1,1);
+      return all.filter(m=>m.type==='Entrée'&&new Date(m.created_at||m.date)>=mDate&&new Date(m.created_at||m.date)<next).reduce((s,m)=>s+m.qty,0);
+    });
+    const sorties=months.map(mDate=>{
+      const next=new Date(mDate.getFullYear(),mDate.getMonth()+1,1);
+      return all.filter(m=>m.type==='Sortie'&&new Date(m.created_at||m.date)>=mDate&&new Date(m.created_at||m.date)<next).reduce((s,m)=>s+m.qty,0);
+    });
+    new Chart(document.getElementById('chart-rap-evol-mensuel'),{type:'bar',data:{labels,datasets:[{label:'Entrées',data:entrees,backgroundColor:'#10b981',borderRadius:3},{label:'Sorties',data:sorties,backgroundColor:'#ef4444',borderRadius:3}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
+  }
+  if (document.getElementById('chart-rap-top-distrib')) {
+    const mvtPeriode=[...fMvtIT(),...fMvtFin()].filter(m=>m.type==='Sortie');
+    const top=topProduitsDistribues(mvtPeriode,10);
+    new Chart(document.getElementById('chart-rap-top-distrib'),{type:'bar',data:{labels:top.map(p=>p.nom.slice(0,16)),datasets:[{data:top.map(p=>p.qty),backgroundColor:'#f59e0b',borderRadius:3}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
+  }
+  if (document.getElementById('chart-rap-top-couteux')) {
+    const top=topProduitsCouteux(10);
+    new Chart(document.getElementById('chart-rap-top-couteux'),{type:'bar',data:{labels:top.map(p=>p.nom.slice(0,16)),datasets:[{data:top.map(p=>Math.round(p.valeur/1e3)),backgroundColor:top.map(p=>p.amort?'#7c3aed':'#4f46e5'),borderRadius:3}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9},callback:v=>v+'K'},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
+  }
+  if (document.getElementById('chart-rap-actifs-statut')) {
+    const rep=repartitionActifsStatut();
+    new Chart(document.getElementById('chart-rap-actifs-statut'),{type:'doughnut',data:{labels:rep.map(r=>r.statut),datasets:[{data:rep.map(r=>r.n),backgroundColor:['#16a34a','#1d4ed8','#f59e0b','#dc2626','#94a3b8'],borderWidth:0,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:9},boxWidth:8}}}}});
+  }
+  if (document.getElementById('chart-rap-evol-valeur')) {
+    const serie=evolutionValeurStock(6);
+    new Chart(document.getElementById('chart-rap-evol-valeur'),{type:'line',data:{labels:serie.map(s=>s.label),datasets:[{label:'Valeur stock (MGA)',data:serie.map(s=>Math.round(s.val/1e3)),borderColor:'#0ea5e9',backgroundColor:'rgba(14,165,233,.1)',tension:.35,fill:true,pointRadius:3}]},options:{...baseOpts,plugins:{legend:{display:false}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'K'},grid:{color:gc}}}}});
   }
 }
