@@ -149,7 +149,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   height:38px;
 }
 .tub-search i{font-size:15px;color:var(--text3);flex-shrink:0}
-.tub-search-label{font-size:12.5px;color:var(--text3);white-space:nowrap;user-select:none}
+.tub-search-label{
+  font-size:12.5px;color:var(--text3);white-space:nowrap;user-select:none;
+  overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;
+}
 .tub-search-kbd{
   margin-left:auto;background:#fff;border:1px solid var(--border-d);
   border-radius:5px;padding:1px 6px;font-size:9.5px;
@@ -165,7 +168,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 /* Section filtre date */
 .tub-filter{
   display:flex;align-items:center;gap:6px;
-  padding:0 10px;flex:0 1 auto;flex-wrap:wrap;height:auto;min-height:38px;
+  padding:0 10px;flex:0 0 auto;flex-wrap:nowrap;height:38px;
 }
 .tub-filter-icon{
   display:flex;align-items:center;justify-content:center;
@@ -438,6 +441,14 @@ mark.hl{background:rgba(0,201,167,.2);color:var(--teal-d);border-radius:2px;padd
 .no-result-row td{text-align:center;padding:32px 20px!important;color:var(--text3)}
 .no-result-row .nri{font-size:28px;margin-bottom:8px}
 .no-result-row .nrt{font-size:13px;font-weight:600;color:var(--text2)}
+
+@media (max-width:1300px){
+  .topbar-unified{flex-wrap:wrap;row-gap:8px;}
+  .tub-search{flex:1 1 100%;order:1;}
+  .tub-sep{order:2;width:100%;height:1px;margin:2px 0;}
+  .tub-filter{order:3;flex:1 1 auto;}
+  .tub-actions{order:4;flex:0 0 auto;}
+}
 
 /* ── Topbar responsive ── */
 @media (max-width:1200px){
