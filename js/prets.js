@@ -59,8 +59,9 @@ function pretStatutBadge(statut) {
 
 // ─── Vue principale ────────────────────────────────────────────
 function renderPrets(dept) {
-  if (dept === 'IT'      && !canManIT())  return accessDenied();
-  if (dept === 'Finance' && !canManFin()) return accessDenied();
+  // ← Vue Lecteur : accès lecture seule autorisé en plus des managers habituels
+  if (dept === 'IT'      && !canManIT()  && !isLecteur()) return accessDenied();
+  if (dept === 'Finance' && !canManFin() && !isLecteur()) return accessDenied();
 
   const color   = dept === 'IT' ? '#4f46e5' : '#10b981';
   const il      = ST.search.inline;
@@ -127,7 +128,10 @@ function renderPrets(dept) {
     }
 
     let actionCell = '<span style="font-size:11px;color:var(--text3)">—</span>';
-    if (p.statut === STATUS_PRET.PERDU) {
+    if (isLecteur()) {
+      // ← Vue Lecteur : aucune action possible, cohérent avec le rôle lecture seule
+      actionCell = '<span style="font-size:10.5px;color:var(--text3)"><i class="ti ti-eye" style="font-size:11px"></i> Lecture seule</span>';
+    } else if (p.statut === STATUS_PRET.PERDU) {
       // ← réversibilité v4 : un prêt Perdu peut redevenir Retourné (matériel retrouvé)
       actionCell = btn('🔎 Retrouvé', '#10b981', true, `retrouverActifPret('${p.id}')`);
     } else if (isValidTransition(TRANSITIONS_PRET, p.statut, STATUS_PRET.RETOURNE)) {
@@ -187,7 +191,7 @@ function renderPrets(dept) {
     ).join('')}</div>
     <div class="btn-row" style="margin-bottom:12px">
       ${btn('↓ CSV', '#10b981', true, `exportPretsCSV('${dept}')`, 'ti-download')}
-      ${btn('+ Nouveau prêt', color, false, `openPret('${dept}')`, 'ti-plus')}
+      ${!isLecteur() ? btn('+ Nouveau prêt', color, false, `openPret('${dept}')`, 'ti-plus') : ''}
     </div>
     ${searchBar}
     <div class="card">

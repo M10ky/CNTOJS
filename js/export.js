@@ -284,36 +284,47 @@ window.exportRapportsCSV = () => {
 };
 
 // ─── Amortissement — registre complet ───
+// FIX : source basculée de ST.produits vers ST.actifs (cohérent avec le fix de
+// renderAmortissement() dans reports.js) + respect des filtres dept/année de
+// la page. Accessible au Lecteur (canSeeHist() l'inclut déjà).
 window.exportAmortissementCSV = () => {
-  if (!canSeeHist()) { showToast("Accès restreint à l'administrateur", 'err'); return; }
+  if (!canSeeHist()) { showToast("Accès restreint", 'err'); return; }
 
-  const prods = ST.produits.filter(p =>
-    p.valeur_achat > 0 && p.date_achat && p.duree_amortissement &&
-    ((canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance'))
-  ).sort((a, b) => (b.valeur_achat || 0) - (a.valeur_achat || 0));
+  const il    = ST.search.inline;
+  const deptF = il.amortDept  || '';
+  const anneeF= il.amortAnnee || '';
+
+  const actifs = getActifsAmortissablesVisibles()
+    .filter(a => {
+      if (deptF  && a.dept !== deptF) return false;
+      if (anneeF && (a.date_achat || '').slice(0, 4) !== anneeF) return false;
+      return true;
+    })
+    .sort((a, b) => (b.valeur_achat || 0) - (a.valeur_achat || 0));
 
   const headers = [
-    'Département', 'Produit', 'Catégorie', 'Emplacement',
-    'Valeur achat (MGA)', 'Date achat',
+    'Département', 'Produit', 'N° CNTO', 'Catégorie', 'Emplacement',
+    'Valeur acquisition (MGA)', 'Date acquisition',
     'Durée (mois)', 'Taux (%/an)', 'Dotation annuelle (MGA)',
     'VNC (MGA)', '% Amorti', 'Statut amortissement',
   ];
 
-  const rows = prods.map(p => {
-    const vnc  = calcVNC(p);
-    const pct  = amortPct(p);
-    const taux = tauxLineaire(p.duree_amortissement);
-    const ann  = annuiteLineaire(p);
+  const rows = actifs.map(a => {
+    const vnc  = calcVNC(a);
+    const pct  = amortPct(a);
+    const taux = tauxLineaire(a.duree_amortissement);
+    const ann  = (a.valeur_achat && a.duree_amortissement) ? Math.round(a.valeur_achat / (a.duree_amortissement / 12)) : null;
     return [
-      p.dept,
-      p.nom,
-      p.categorie,
-      p.emplacement        || '',
-      p.valeur_achat       || 0,
-      p.date_achat         || '',
-      p.duree_amortissement|| '',
-      taux                 ?? '',
-      ann                  ?? '',
+      a.dept,
+      a.produit_nom || '',
+      a.id,
+      a.categorie           || '',
+      a.emplacement         || '',
+      a.valeur_achat        || 0,
+      a.date_achat          || '',
+      a.duree_amortissement || '',
+      taux  ?? '',
+      ann   ?? '',
       vnc !== null ? vnc   : '',
       pct !== null ? pct + '%' : '',
       pct === 100 ? 'Totalement amorti'

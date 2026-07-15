@@ -93,6 +93,111 @@ function valeurMoyenneParCategorie() {
     .sort((a, b) => b.total - a.total);
 }
 
+// ═══════════════════════════════════════════════════════════════
+//   HELPERS — DASHBOARD LECTEUR (vue de pilotage stratégique)
+// ═══════════════════════════════════════════════════════════════
+
+/** VNC globale + valeur brute de tous les actifs individuels "vivants"
+ *  (En service + En prêt), tous départements visibles confondus. */
+function getVNCGlobaleActifs() {
+  const visibles = (ST.actifs || []).filter(a =>
+    (a.statut === STATUS_ACTIF.EN_SERVICE || a.statut === STATUS_ACTIF.EN_PRET) &&
+    ((canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance'))
+  );
+  const brute = visibles.reduce((s, a) => s + (a.valeur_achat || 0), 0);
+  const vnc   = visibles.reduce((s, a) => s + (calcVNC(a) || 0), 0);
+  return { brute, vnc, amorti: brute - vnc, nb: visibles.length };
+}
+
+/** Prêts en cours / en retard valorisés via la valeur d'achat de l'actif prêté. */
+function getPretsValorises() {
+  const visibles = (ST.prets || []).filter(p =>
+    ((canManIT() || isLecteur()) && p.dept === 'IT') ||
+    ((canManFin() || isLecteur()) && p.dept === 'Finance')
+  );
+  const enCours  = visibles.filter(p => p.statut === STATUS_PRET.EN_COURS);
+  const enRetard = visibles.filter(p => p.statut === STATUS_PRET.EN_RETARD);
+  const valoriser = liste => liste.reduce((s, p) => {
+    const a = (ST.actifs || []).find(x => x.id === getActifNumero(p));
+    return s + (a?.valeur_achat || 0);
+  }, 0);
+  const retard30 = enRetard.filter(p => {
+    if (!p.date_retour_prevue) return false;
+    const jours = Math.ceil((new Date() - new Date(p.date_retour_prevue)) / 86400000);
+    return jours > 30;
+  });
+  return {
+    enCours: enCours.length, enRetard: enRetard.length,
+    valeurEnCours: valoriser(enCours), valeurEnRetard: valoriser(enRetard),
+    retard30: retard30.length,
+  };
+}
+
+/** Taux de rotation approximatif : valeur des sorties (période) / valeur du stock actuel
+ *  (non-amortissables uniquement — même périmètre que getValeurStockActuel). */
+function getTauxRotationStock() {
+  const nonAmortIds = new Set(
+    getProduitsNonAmort()
+      .filter(p => (canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance'))
+      .map(p => p.id)
+  );
+  const sortiesVal = [...fMvtIT(), ...fMvtFin()]
+    .filter(m => m.type === 'Sortie' && nonAmortIds.has(m.produit_id))
+    .reduce((s, m) => s + (m.valeur || 0), 0);
+  const stockVal = getProduitsVisibles().filter(p => !p.is_amortissable)
+    .reduce((s, p) => s + getValeurStockActuel(p.id), 0);
+  return stockVal > 0 ? Math.round((sortiesVal / stockVal) * 100) / 100 : 0;
+}
+
+/** Top N catégories les plus valorisées — stock CUMP (non-amort.) + VNC (amortissables). */
+function getTopCategoriesValorisees(n = 5) {
+  const map = {};
+  getProduitsVisibles().filter(p => !p.is_amortissable).forEach(p => {
+    const cat = p.categorie || '—';
+    map[cat] = (map[cat] || 0) + getValeurStockActuel(p.id);
+  });
+  (ST.actifs || [])
+    .filter(a => (a.statut === 'En service' || a.statut === 'En prêt') &&
+      ((canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance')))
+    .forEach(a => {
+      const cat = a.categorie || '—';
+      map[cat] = (map[cat] || 0) + (calcVNC(a) || 0);
+    });
+  return Object.entries(map).map(([cat, val]) => ({ cat, val }))
+    .sort((a, b) => b.val - a.val).slice(0, n);
+}
+
+/** Répartition des actifs individuels par état, départements visibles confondus. */
+function getRepartitionActifsEtat() {
+  const visibles = (ST.actifs || []).filter(a => (canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance'));
+  return {
+    enService:   visibles.filter(a => a.statut === 'En service').length,
+    enPret:      visibles.filter(a => a.statut === 'En prêt').length,
+    horsService: visibles.filter(a => a.statut === 'Hors service').length,
+    reforme:     visibles.filter(a => a.statut === 'Réformé').length,
+    sorti:       visibles.filter(a => a.statut === 'Sorti').length,
+  };
+}
+
+/** Alertes majeures consolidées pour le pilotage. */
+function getAlertesMajeures() {
+  const ruptures = [...alertsIT(), ...alertsFin()].filter(p => p.stock === 0);
+  const { retard30 } = getPretsValorises();
+  return { ruptures: ruptures.length, retard30 };
+}
+
+/** Actifs amortissables "exploitables" (données complètes), visibles pour l'utilisateur courant. */
+function getActifsAmortissablesVisibles() {
+  return (ST.actifs || []).filter(a =>
+    a.valeur_achat > 0 && a.date_achat && a.duree_amortissement &&
+    ((canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance'))
+  );
+}
+
+// ─── Filtres dédiés à la page Amortissement ────────────────────
+window.setAmortDeptFilter  = (val) => { ST.search.inline.amortDept  = val; render(); };
+window.setAmortAnneeFilter = (val) => { ST.search.inline.amortAnnee = val; render(); };
+
 // ═══ DASHBOARD ═══
 function renderDashboard() {
   // Point 1 : valeur du stock global = stock actuel × CUMP, produits non
@@ -120,10 +225,74 @@ function renderDashboard() {
     <td style="font-size:11px;color:var(--text2)">${m.destination||'—'}</td>
     <td style="font-size:11px;color:var(--text3)">${m.user_name}</td>
   </tr>`).join('');
-  const infoBanner=(!showP||!canSeeHist())?`<div class="info-banner"><i class="ti ti-info-circle"></i><div>Vous consultez en <strong>mode lecture</strong>. Pour demander du matériel, utilisez la section <strong>Demandes</strong>.</div></div>`:'';
+    const infoBanner=(!showP||!canSeeHist())?`<div class="info-banner"><i class="ti ti-info-circle"></i><div>Vous consultez en <strong>mode lecture</strong>. Pour demander du matériel, utilisez la section <strong>Demandes</strong>.</div></div>`:'';
+
+  // ═══════════════════════════════════════════════════════════════
+  //   BLOC STRATÉGIQUE — RÔLE LECTEUR (PDG / Direction Finance)
+  //   Consolidation IT + Finance, lecture seule, orienté pilotage.
+  // ═══════════════════════════════════════════════════════════════
+  let lecteurBlock = '';
+  if (isLecteur()) {
+    const { brute: vncBrute, vnc: vncGlobale, nb: nbActifsAmort } = getVNCGlobaleActifs();
+    const pretsInfo  = getPretsValorises();
+    const rotation   = getTauxRotationStock();
+    const etatActifs = getRepartitionActifsEtat();
+    const topCats    = getTopCategoriesValorisees(5);
+    const alertesMaj = getAlertesMajeures();
+    const valeurStockTotal = vIT + vFin;
+
+    const lecteurKpis = [
+      { lbl:'Valeur Totale Stock (IT+Fin)',        val:fmt(valeurStockTotal)+' MGA', s:'stock non-amortissable (CUMP)',                 c:'#0ea5e9' },
+      { lbl:'VNC Globale Actifs Amortissables',     val:fmt(vncGlobale)+' MGA',       s:`sur ${fmt(vncBrute)} MGA d'acquisition · ${nbActifsAmort} actif(s)`, c:'#4f46e5' },
+      { lbl:'Taux de rotation du stock',            val:rotation,                     s:'sorties valorisées / stock (période)',           c:'#f59e0b' },
+      { lbl:'Actifs En service',                    val:etatActifs.enService,         s:`${etatActifs.enPret} actuellement en prêt`,      c:'#10b981' },
+      { lbl:'Actifs HS / Réformés',                 val:etatActifs.horsService+etatActifs.reforme, s:`${etatActifs.horsService} HS · ${etatActifs.reforme} réformé(s)`, c:'#94a3b8' },
+      { lbl:'Prêts en cours',                       val:pretsInfo.enCours,            s:`${fmt(pretsInfo.valeurEnCours)} MGA valorisés`,  c:'#3b82f6' },
+      { lbl:'Prêts en retard',                      val:pretsInfo.enRetard,           s:`${fmt(pretsInfo.valeurEnRetard)} MGA valorisés`, c:pretsInfo.enRetard>0?'#ef4444':'#22c55e' },
+    ];
+
+    const alertBanner = (alertesMaj.ruptures>0 || alertesMaj.retard30>0)
+      ? `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626;margin-bottom:14px">
+          <i class="ti ti-alert-triangle" style="color:#dc2626"></i>
+          <div>
+            ${alertesMaj.ruptures>0?`<strong>${alertesMaj.ruptures}</strong> produit(s) en rupture critique. `:''}
+            ${alertesMaj.retard30>0?`<strong>${alertesMaj.retard30}</strong> prêt(s) en retard de plus de 30 jours.`:''}
+          </div>
+        </div>` : '';
+
+    const topCatRows = topCats.map((c,i)=>`<tr>
+      <td style="font-weight:700;color:var(--text3)">#${i+1}</td>
+      <td style="font-weight:600">${c.cat}</td>
+      <td style="font-weight:800;color:#4f46e5">${fmt(c.val)} MGA</td>
+    </tr>`).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:14px">Aucune donnée</td></tr>`;
+
+    lecteurBlock = `
+      <div class="info-banner" style="background:linear-gradient(135deg,#eef2ff,#f0fdf9);border-color:#c7d2fe;color:#3730a3;margin-bottom:14px">
+        <i class="ti ti-chart-infographic" style="color:#4f46e5"></i>
+        <div><strong>Vue de pilotage stratégique.</strong> Synthèse consolidée IT + Finance — lecture seule.</div>
+      </div>
+      ${alertBanner}
+      <div class="kpi-grid">${lecteurKpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s||''}</div></div>`).join('')}</div>
+      <div class="charts-grid">
+        <div class="chart-card"><div class="chart-ttl">Évolution de la valeur du stock (12 mois)</div><div class="bar-chart-wrap"><canvas id="chart-lecteur-evol"></canvas></div></div>
+        <div class="chart-card"><div class="chart-ttl">Répartition IT vs Finance (valeur totale, M MGA)</div><div class="bar-chart-wrap"><canvas id="chart-lecteur-repart"></canvas></div></div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card"><div class="chart-ttl">Actifs individuels par état</div><div class="bar-chart-wrap"><canvas id="chart-lecteur-etat-actifs"></canvas></div></div>
+        <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
+          <div class="card-hd"><span class="card-ttl"><i class="ti ti-trophy" style="color:#f59e0b"></i>Top 5 catégories les plus valorisées</span></div>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th>Rang</th><th>Catégorie</th><th>Valeur</th></tr></thead>
+            <tbody>${topCatRows}</tbody>
+          </table></div>
+        </div>
+      </div>`;
+  }
+
   return `<p class="page-title">Tableau de Bord</p>
     <p class="page-sub">${new Date().toLocaleDateString('fr-FR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</p>
     ${infoBanner}
+    ${lecteurBlock}
     <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s||''}</div></div>`).join('')}</div>
     ${canSeeHist()?`
     <div class="charts-grid">
@@ -255,31 +424,73 @@ function renderRapports() {
 }
 
 // ── AMORTISSEMENT ──
+// FIX (bug "0 0 0 0") : cette page se basait sur ST.produits (champs catalogue
+// valeur_achat/date_achat/duree_amortissement), quasi toujours vides depuis
+// l'introduction des actifs individuels — chaque unité a désormais SON PROPRE
+// prix/date/durée dans ST.actifs. La page est reconstruite sur ST.actifs,
+// seule source de vérité réelle pour l'amortissement, + filtres dept/année,
+// totaux en pied de tableau, et lecture seule pour le rôle Lecteur.
 function renderAmortissement() {
-  const allProd=ST.produits.filter(p=>(canSeeIT()&&p.dept==='IT')||(canSeeFin()&&p.dept==='Finance'));
-  const avecAmort=allProd.filter(p=>p.valeur_achat>0&&p.date_achat&&p.duree_amortissement);
-  const sansAmort=allProd.filter(p=>!p.valeur_achat||!p.date_achat||!p.duree_amortissement);
-  const totalAchat=avecAmort.reduce((s,p)=>s+(p.valeur_achat||0),0);
-  const totalVNC  =avecAmort.reduce((s,p)=>s+(calcVNC(p)||0),0);
-  const totalAmort=totalAchat-totalVNC;
-  const nbExpires =avecAmort.filter(p=>calcVNC(p)===0).length;
-  const kpis=[
-    {lbl:'Valeur Achat Totale',val:fmt(totalAchat)+' MGA',s:`${avecAmort.length} actifs`,c:'#4f46e5'},
-    {lbl:'VNC Actuelle Totale',val:fmt(totalVNC)+' MGA',s:'Valeur nette comptable',c:'#10b981'},
-    {lbl:'Amortissement Cumulé',val:fmt(totalAmort)+' MGA',s:avecAmort.length?`${Math.round(totalAmort/totalAchat*100)}% de la valeur initiale`:'—',c:'#f59e0b'},
-    {lbl:'Actifs Totalement Amortis',val:nbExpires,s:'VNC nulle',c:'#ef4444'},
+  const il     = ST.search.inline;
+  const deptF  = il.amortDept  || '';
+  const anneeF = il.amortAnnee || '';
+
+  const allActifs = getActifsAmortissablesVisibles();
+  const annees = [...new Set(allActifs.map(a => (a.date_achat || '').slice(0, 4)).filter(Boolean))].sort((a, b) => b - a);
+
+  const filtered = allActifs.filter(a => {
+    if (deptF  && a.dept !== deptF) return false;
+    if (anneeF && (a.date_achat || '').slice(0, 4) !== anneeF) return false;
+    return true;
+  });
+
+  const sansAmort = (ST.actifs || [])
+    .filter(a => (canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance'))
+    .filter(a => !a.valeur_achat || !a.date_achat || !a.duree_amortissement);
+
+  const totalAchat = filtered.reduce((s, a) => s + (a.valeur_achat || 0), 0);
+  const totalVNC   = filtered.reduce((s, a) => s + (calcVNC(a) || 0), 0);
+  const totalAmort = totalAchat - totalVNC;
+  const nbExpires  = filtered.filter(a => calcVNC(a) === 0).length;
+
+  const kpis = [
+    { lbl:'Valeur Acquisition Totale',  val:fmt(totalAchat)+' MGA', s:`${filtered.length} actif(s)`, c:'#4f46e5' },
+    { lbl:'VNC Actuelle Totale',        val:fmt(totalVNC)+' MGA',   s:'Valeur nette comptable',      c:'#10b981' },
+    { lbl:'Amortissement Cumulé',       val:fmt(totalAmort)+' MGA', s:filtered.length?`${Math.round(totalAmort/totalAchat*100)}% de la valeur initiale`:'—', c:'#f59e0b' },
+    { lbl:'Actifs Totalement Amortis',  val:nbExpires,              s:'VNC nulle',                   c:'#ef4444' },
   ];
-  const rows=avecAmort.sort((a,b)=>(b.valeur_achat||0)-(a.valeur_achat||0)).map(p=>{
-    const vnc=calcVNC(p);const pct=amortPct(p)||0;const c=amortColor(pct);
-    const taux=tauxLineaire(p.duree_amortissement);const annuite=annuiteLineaire(p);
+
+  const filterBar = `
+    <div class="content-search-bar" style="margin-bottom:12px">
+      <div class="csb-row csb-row-filters" style="padding:10px 14px">
+        <div class="csb-chip-group">
+          <span class="csb-filter-label">Dépt</span>
+          <span class="csb-pill${deptF==='IT'?' on-it on':''}" onclick="setAmortDeptFilter('${deptF==='IT'?'':'IT'}')">IT</span>
+          <span class="csb-pill${deptF==='Finance'?' on-fin on':''}" onclick="setAmortDeptFilter('${deptF==='Finance'?'':'Finance'}')">Finance</span>
+        </div>
+        <div class="csb-chip-group">
+          <label class="csb-filter-label" for="amort-annee-sel">Année d'acquisition</label>
+          <select id="amort-annee-sel" class="csb-cat-select" onchange="setAmortAnneeFilter(this.value)">
+            <option value="" ${!anneeF?'selected':''}>Toutes années</option>
+            ${annees.map(y=>`<option value="${y}" ${anneeF===y?'selected':''}>${y}</option>`).join('')}
+          </select>
+        </div>
+        ${(deptF||anneeF) ? `<button class="csb-reset" onclick="setAmortDeptFilter('');setAmortAnneeFilter('')"><i class="ti ti-refresh" style="font-size:11px"></i> Réinitialiser</button>` : ''}
+      </div>
+    </div>`;
+
+  const rows = filtered.sort((a, b) => (b.valeur_achat || 0) - (a.valeur_achat || 0)).map(a => {
+    const vnc = calcVNC(a); const pct = amortPct(a) || 0; const c = amortColor(pct);
+    const taux = tauxLineaire(a.duree_amortissement);
+    const annuite = (a.valeur_achat && a.duree_amortissement) ? Math.round(a.valeur_achat / (a.duree_amortissement / 12)) : null;
     return `<tr>
-      <td>${deptTag(p.dept)}</td>
-      <td><div style="font-weight:600">${p.nom}</div></td>
-      <td><span class="tag" style="color:#475569;background:#f1f5f9">${p.categorie}</span></td>
-      <td><span class="tag" style="color:#1e40af;background:#dbeafe">${p.emplacement||'—'}</span></td>
-      <td style="font-family:var(--mono);font-size:12px">${fmt(p.valeur_achat)} MGA</td>
-      <td style="font-size:11px;color:var(--text3)">${fmtDate(p.date_achat)}</td>
-      <td style="font-size:11px;color:var(--text3)">${(p.duree_amortissement/12).toFixed(1)}a · <strong>${taux}%/an</strong></td>
+      <td>${deptTag(a.dept)}</td>
+      <td><div style="font-weight:600">${a.produit_nom || '—'}</div><code class="actif-id" style="margin-top:2px;display:inline-block">${a.id}</code></td>
+      <td><span class="tag" style="color:#475569;background:#f1f5f9">${a.categorie || '—'}</span></td>
+      <td><span class="tag" style="color:#1e40af;background:#dbeafe">${a.emplacement || '—'}</span></td>
+      <td style="font-family:var(--mono);font-size:12px">${fmt(a.valeur_achat)} MGA</td>
+      <td style="font-size:11px;color:var(--text3)">${fmtDate(a.date_achat)}</td>
+      <td style="font-size:11px;color:var(--text3)">${(a.duree_amortissement/12).toFixed(1)}a · <strong>${taux}%/an</strong></td>
       <td style="font-size:11px;color:var(--text3)">${annuite?fmt(annuite)+' MGA/an':'—'}</td>
       <td>
         <div style="font-weight:700;color:${c}">${vnc===0?'<span class="tag" style="color:#dc2626;background:#fef2f2">Totalement amorti</span>':fmt(vnc)+' MGA'}</div>
@@ -288,40 +499,57 @@ function renderAmortissement() {
           <span style="font-size:10px;color:${c};font-weight:700">${pct}%</span>
         </div>
       </td>
-      <td>${btn('✏','#64748b',true,`openEditProduct('${p.id}')`)}</td>
+      <td>${isLecteur() ? btn('🕘', '#6366f1', true, `openActifHistorique('${a.id}')`) : btn('✏', '#64748b', true, `openEditActif('${a.id}')`)}</td>
     </tr>`;
   }).join('');
-  const noAmortRows=sansAmort.slice(0,5).map(p=>`<tr><td>${deptTag(p.dept)}</td><td style="font-weight:500">${p.nom}</td><td><span class="tag" style="color:#475569;background:#f1f5f9">${p.categorie}</span></td><td>${btn('Configurer','#4f46e5',true,`openEditProduct('${p.id}')`)}</td></tr>`).join('');
+
+  const totalsFooterRow = filtered.length ? `<tr style="background:#f8fafc;font-weight:800">
+    <td colspan="4" style="text-align:right">TOTAUX</td>
+    <td style="font-family:var(--mono)">${fmt(totalAchat)} MGA</td>
+    <td></td><td></td>
+    <td style="font-size:11px">${fmt(totalAmort)} MGA amorti</td>
+    <td>${fmt(totalVNC)} MGA</td>
+    <td></td>
+  </tr>` : '';
+
+  const noAmortRows = sansAmort.slice(0, 5).map(a => `<tr>
+    <td>${deptTag(a.dept)}</td>
+    <td style="font-weight:500">${a.produit_nom || '—'} <code class="actif-id">${a.id}</code></td>
+    <td><span class="tag" style="color:#475569;background:#f1f5f9">${a.categorie || '—'}</span></td>
+    <td>${isLecteur() ? '<span style="color:var(--text3);font-size:11px">—</span>' : btn('Configurer', '#4f46e5', true, `openEditActif('${a.id}')`)}</td>
+  </tr>`).join('');
+
   return `<p class="page-title">Amortissement Linéaire des Actifs</p>
-    <p class="page-sub">Valeur nette comptable (VNC) — Méthode linéaire</p>
+    <p class="page-sub">Valeur nette comptable (VNC) — Méthode linéaire, calculée actif par actif</p>
     <div class="info-banner" style="background:#fffbeb;border-color:#fcd34d;color:#92400e">
       <i class="ti ti-info-circle" style="color:#f59e0b"></i>
       <div><strong>Méthode linéaire :</strong> L'actif perd une valeur égale chaque année. Taux annuel = 100% / Durée en années.</div>
     </div>
     <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s}</div></div>`).join('')}</div>
-        <div class="btn-row" style="margin-bottom:12px">
+    <div class="btn-row" style="margin-bottom:12px">
       ${btn('↓ CSV Amortissement', '#10b981', true, 'exportAmortissementCSV()', 'ti-download')}
     </div>
-    ${avecAmort.length?`
+    ${filterBar}
+    ${filtered.length ? `
     <div class="charts-grid">
       <div class="chart-card"><div class="chart-ttl">VNC vs Valeur initiale — Top 8 actifs</div><div class="bar-chart-wrap"><canvas id="chart-amort"></canvas></div></div>
       <div class="chart-card"><div class="chart-ttl">Répartition par statut d'amortissement</div><div class="bar-chart-wrap"><canvas id="chart-amort-pie"></canvas></div></div>
     </div>
     <div class="card">
-      <div class="card-hd"><span class="card-ttl"><i class="ti ti-chart-line" style="color:var(--teal)"></i>Tableau de bord des amortissements</span></div>
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-chart-line" style="color:var(--teal)"></i>Registre des amortissements (${filtered.length} actif(s))</span></div>
       <div style="overflow-x:auto"><table>
-        <thead><tr>${['Dépt','Actif','Catégorie','Emplacement','Valeur Achat','Date Achat','Durée · Taux','Dotation/an','VNC · Avanc.','Action'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr>${['Dépt','Actif','Catégorie','Emplacement','Valeur Acquisition','Date Acquisition','Durée · Taux','Dotation/an','VNC · Avanc.','Action'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows}${totalsFooterRow}</tbody>
       </table></div>
-    </div>`:''}
-    ${sansAmort.length?`
+    </div>` : `<div class="card"><div class="empty-state"><div class="empty-ico">📉</div><div style="font-size:14px;font-weight:700;color:var(--text)">Aucun actif amortissable ne correspond aux filtres</div></div></div>`}
+    ${sansAmort.length ? `
     <div class="card" style="border-left:3px solid #f59e0b">
-      <div class="card-hd"><span class="card-ttl"><i class="ti ti-alert-triangle" style="color:#f59e0b"></i>${sansAmort.length} actif(s) sans données d'amortissement</span></div>
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-alert-triangle" style="color:#f59e0b"></i>${sansAmort.length} actif(s) sans données d'amortissement complètes</span></div>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>Dépt</th><th>Produit</th><th>Catégorie</th><th>Action</th></tr></thead>
+        <thead><tr><th>Dépt</th><th>Actif</th><th>Catégorie</th><th>Action</th></tr></thead>
         <tbody>${noAmortRows}${sansAmort.length>5?`<tr><td colspan="4" style="text-align:center;color:var(--text3);font-size:11px">… et ${sansAmort.length-5} autres</td></tr>`:''}</tbody>
       </table></div>
-    </div>`:''}`;
+    </div>` : ''}`;
 }
 
 // ═══ GRAPHIQUES ═══
@@ -363,16 +591,48 @@ function drawCharts() {
     const all=[...ST.mouvements];
     new Chart(document.getElementById('chart-mvt-30'),{type:'line',data:{labels:days.map(d=>{const x=new Date(d);return `${x.getDate()}/${x.getMonth()+1}`;}),datasets:[{label:'Entrées',data:days.map(d=>all.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Entrée').reduce((s,m)=>s+m.qty,0)),borderColor:'#10b981',tension:.35,fill:false,pointRadius:2},{label:'Sorties',data:days.map(d=>all.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Sortie').reduce((s,m)=>s+m.qty,0)),borderColor:'#ef4444',tension:.35,fill:false,pointRadius:2}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:8},maxTicksLimit:10},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
+  // FIX : ces deux graphiques utilisent désormais ST.actifs (source réelle des
+  // données d'amortissement) au lieu de ST.produits — cohérent avec le fix de
+  // renderAmortissement() ci-dessus. Respectent les mêmes filtres dept/année.
   if (document.getElementById('chart-amort')) {
-    const prods=ST.produits.filter(p=>p.valeur_achat>0&&p.date_achat).sort((a,b)=>(b.valeur_achat||0)-(a.valeur_achat||0)).slice(0,8);
-    new Chart(document.getElementById('chart-amort'),{type:'bar',data:{labels:prods.map(p=>p.nom.slice(0,14)),datasets:[{label:'Valeur achat',data:prods.map(p=>Math.round((p.valeur_achat||0)/1e6*100)/100),backgroundColor:'#e0e7ff',borderRadius:3},{label:'VNC',data:prods.map(p=>Math.round((calcVNC(p)||0)/1e6*100)/100),backgroundColor:'#4f46e5',borderRadius:3}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:8}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'M'},grid:{color:gc}}}}});
+    const ilA = ST.search.inline;
+    const deptF = ilA.amortDept || '', anneeF = ilA.amortAnnee || '';
+    const actifsA = getActifsAmortissablesVisibles().filter(a => {
+      if (deptF && a.dept !== deptF) return false;
+      if (anneeF && (a.date_achat||'').slice(0,4) !== anneeF) return false;
+      return true;
+    }).sort((a,b)=>(b.valeur_achat||0)-(a.valeur_achat||0)).slice(0,8);
+    new Chart(document.getElementById('chart-amort'),{type:'bar',data:{labels:actifsA.map(a=>(a.produit_nom||a.id).slice(0,14)),datasets:[{label:'Valeur acquisition',data:actifsA.map(a=>Math.round((a.valeur_achat||0)/1e6*100)/100),backgroundColor:'#e0e7ff',borderRadius:3},{label:'VNC',data:actifsA.map(a=>Math.round((calcVNC(a)||0)/1e6*100)/100),backgroundColor:'#4f46e5',borderRadius:3}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:8}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'M'},grid:{color:gc}}}}});
   }
   if (document.getElementById('chart-amort-pie')) {
-    const w=ST.produits.filter(p=>p.valeur_achat>0&&p.date_achat);
-    const fully=w.filter(p=>calcVNC(p)===0).length;
-    const partial=w.filter(p=>{const pct=amortPct(p);return pct!==null&&pct>50&&pct<100;}).length;
-    const low=w.filter(p=>{const pct=amortPct(p);return pct!==null&&pct<=50;}).length;
+    const ilA = ST.search.inline;
+    const deptF = ilA.amortDept || '', anneeF = ilA.amortAnnee || '';
+    const w = getActifsAmortissablesVisibles().filter(a => {
+      if (deptF && a.dept !== deptF) return false;
+      if (anneeF && (a.date_achat||'').slice(0,4) !== anneeF) return false;
+      return true;
+    });
+    const fully=w.filter(a=>calcVNC(a)===0).length;
+    const partial=w.filter(a=>{const pct=amortPct(a);return pct!==null&&pct>50&&pct<100;}).length;
+    const low=w.filter(a=>{const pct=amortPct(a);return pct!==null&&pct<=50;}).length;
     new Chart(document.getElementById('chart-amort-pie'),{type:'doughnut',data:{labels:['Faible <50%','Partiel 50–99%','Totalement amorti'],datasets:[{data:[low,partial,fully],backgroundColor:['#10b981','#f59e0b','#ef4444'],borderWidth:0,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:10},boxWidth:9}}}}});
+  }
+
+  // ═══ NOUVEAUX GRAPHIQUES — DASHBOARD LECTEUR ═══
+  if (document.getElementById('chart-lecteur-evol')) {
+    const serie = evolutionValeurStock(12);
+    new Chart(document.getElementById('chart-lecteur-evol'),{type:'line',data:{labels:serie.map(s=>s.label),datasets:[{label:'Valeur stock (MGA)',data:serie.map(s=>Math.round(s.val/1e3)),borderColor:'#4f46e5',backgroundColor:'rgba(79,70,229,.1)',tension:.35,fill:true,pointRadius:3}]},options:{...baseOpts,plugins:{legend:{display:false}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'K'},grid:{color:gc}}}}});
+  }
+  if (document.getElementById('chart-lecteur-repart')) {
+    const vITTot  = ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurStockActuel(p.id),0)
+      + (ST.actifs||[]).filter(a=>a.dept==='IT'&&(a.statut==='En service'||a.statut==='En prêt')).reduce((s,a)=>s+(calcVNC(a)||0),0);
+    const vFinTot = ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurStockActuel(p.id),0)
+      + (ST.actifs||[]).filter(a=>a.dept==='Finance'&&(a.statut==='En service'||a.statut==='En prêt')).reduce((s,a)=>s+(calcVNC(a)||0),0);
+    new Chart(document.getElementById('chart-lecteur-repart'),{type:'bar',data:{labels:['IT','Finance'],datasets:[{data:[Math.round(vITTot/1e6*100)/100,Math.round(vFinTot/1e6*100)/100],backgroundColor:['#4f46e5','#10b981'],borderRadius:4}]},options:{...baseOpts,scales:{x:{ticks:{color:tc,font:{size:10}},grid:{display:false}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'M'},grid:{color:gc}}}}});
+  }
+  if (document.getElementById('chart-lecteur-etat-actifs')) {
+    const etat = getRepartitionActifsEtat();
+    new Chart(document.getElementById('chart-lecteur-etat-actifs'),{type:'doughnut',data:{labels:['En service','En prêt','Hors service','Réformé','Sorti'],datasets:[{data:[etat.enService,etat.enPret,etat.horsService,etat.reforme,etat.sorti],backgroundColor:['#16a34a','#1d4ed8','#f59e0b','#94a3b8','#dc2626'],borderWidth:0,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{font:{size:9},boxWidth:8}}}}});
   }
 
   // ═══ NOUVEAUX GRAPHIQUES — RAPPORTS (Point 3) ═══

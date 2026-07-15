@@ -20,7 +20,7 @@ const ST = {
   produits: [],
   mouvements: [],
   demandes: [],
-  actifs: [], 
+  actifs: [],
   params: { destinations: [], categoriesIT: [], categoriesFin: [], emplacements: [], fournisseurs: [] },
   mouvementsEntrees: [],   // ← Étape D+ : toutes les entrées (sans filtre date) pour valeur cumulée
   rtChannels: [],
@@ -37,6 +37,8 @@ const ST = {
       statDem: '',
       actif: '',        // ← ÉTAPE B
       userRole: '',     // ← filtre rôle dans l'onglet Utilisateurs
+      amortDept: '',    // ← Vue Lecteur : filtre département page Amortissement
+      amortAnnee: '',   // ← Vue Lecteur : filtre année d'acquisition
     }
   },
   searchDebounce: null,
@@ -111,7 +113,11 @@ const isLecteur   = () => curRole() === 'Lecteur'; // lecture seule : Dashboard,
 
 const canSeeIT    = () => isAdmin() || isSupportIT() || isUserIT() || isLecteur();
 const canSeeFin   = () => isAdmin() || isResFin()    || isUserFin() || isLecteur();
-const canSeePrix  = () => isAdmin() || isSupportIT() || isResFin(); // Lecteur ne voit pas les prix
+// FIX (Vue Lecteur enrichie) : le Lecteur (PDG / Direction Finance en consultation)
+// est un rôle de pilotage stratégique — il doit voir toutes les valeurs monétaires.
+// canSeePrix() reste un gate d'AFFICHAGE uniquement : l'édition reste strictement
+// gérée par canManIT()/canManFin(), donc cet ajout n'ouvre aucune capacité d'écriture.
+const canSeePrix  = () => isAdmin() || isSupportIT() || isResFin() || isLecteur();
 const canManIT    = () => isAdmin() || isSupportIT();
 const canManFin   = () => isAdmin() || isResFin();
 const canValidIT  = () => canManIT();
@@ -280,7 +286,7 @@ function escQ(s) { return String(s||'').replace(/'/g,"\\'").replace(/"/g,''); }
 // ═══ INLINE SEARCH HELPERS ═══
 window.setInlineQuery = (q) => { ST.search.inline.query = q; render(); };
 window.resetInlineFilters = () => {
-  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'', actif:'', userRole:'' };
+  ST.search.inline = { query:'', dept:'', cat:'', statut:'', type:'', urgence:'', statDem:'', actif:'', userRole:'', amortDept:'', amortAnnee:'' };
   renderActiveFiltersBar(); render();
 };
 window.toggleInlineFilter = (key, val) => {

@@ -21,19 +21,21 @@ function buildNav() {
     // canDemIT() exclut déjà le Lecteur
     if (canDemIT()) h+=ni('dem-it','ti-clipboard-list','Demandes IT', canManIT()?attenteIT():0);
     if (canManIT()) h+=ni('alertes-it','ti-bell','Alertes IT',alertsIT().length,'#ef4444');
-    if (canManIT()) h+=ni('actifs-it','ti-devices','Actifs IT');
-    if (canManIT()) h+=ni('prets-it','ti-transfer','Prêts IT');
+    // ← Vue Lecteur : accès lecture seule aux Actifs/Prêts (PDG / Direction Finance)
+    if (canManIT() || isLecteur()) h+=ni('actifs-it','ti-devices','Actifs IT');
+    if (canManIT() || isLecteur()) h+=ni('prets-it','ti-transfer','Prêts IT');
   }
   if (canSeeFin()) {
     h+=`<div class="nav-sec">STOCK FINANCE</div>`;
     h+=ni('stock-fin','ti-files','Inventaire Finance');
     if (canManFin()) h+=ni('mvt-fin','ti-arrows-exchange','Mouvements Finance');
     if (canDemFin()) h+=ni('dem-fin','ti-clipboard-list','Demandes Finance', canManFin()?attenteFin():0);
-    if (canManFin()) h+=ni('alertes-fin','ti-bell','Alertes Finance',alertsFin().length,'#ef4444');
-    if (canManFin()) h+=ni('actifs-fin','ti-devices','Actifs Finance');
-    if (canManFin()) h+=ni('prets-fin','ti-transfer','Prêts Finance');
+if (canManFin()) h+=ni('alertes-fin','ti-bell','Alertes Finance',alertsFin().length,'#ef4444');
+    // ← Vue Lecteur : accès lecture seule aux Actifs/Prêts (PDG / Direction Finance)
+    if (canManFin() || isLecteur()) h+=ni('actifs-fin','ti-devices','Actifs Finance');
+    if (canManFin() || isLecteur()) h+=ni('prets-fin','ti-transfer','Prêts Finance');
   }
-  if (canSeeHist()) { 
+  if (canSeeHist()) {
     h+=`<div class="nav-sec">ANALYSE</div>`;
     h+=ni('historique','ti-history','Historique');
     h+=ni('rapports','ti-chart-bar','Rapports');
@@ -54,11 +56,12 @@ function ni(id, icon, lbl, badge=0, bColor='#f59e0b') {
 
 window.goto = t => {
   // Reset complet des filtres inline
-  ST.search.inline = { 
-    query: '', dept: '', cat: '', statut: '', type: '', 
-    urgence: '', statDem: '', actif: '' 
+  ST.search.inline = {
+    query: '', dept: '', cat: '', statut: '', type: '',
+    urgence: '', statDem: '', actif: '', userRole: '',
+    amortDept: '', amortAnnee: ''   // ← Vue Lecteur : filtres page Amortissement
   };
-  ST.tab = t; 
+  ST.tab = t;
   render();
 };
 
@@ -349,10 +352,11 @@ function render() {
   else if (t==='historique')   html=canSeeHist()?renderHistorique()        :accessDenied();
   else if (t==='rapports')     html=canSeeHist()?renderRapports()          :accessDenied();
   else if (t==='amortissement')html=canSeeHist()?renderAmortissement()     :accessDenied();
-  else if (t==='actifs-it')    html=canManIT()  ?renderActifs('IT')        :accessDenied(); // ← Étape C
-  else if (t==='actifs-fin')   html=canManFin() ?renderActifs('Finance')   :accessDenied(); // ← Étape C
-  else if (t==='prets-it')     html=canManIT()  ?renderPrets('IT')         :accessDenied(); // ← Étape D
-  else if (t==='prets-fin')    html=canManFin() ?renderPrets('Finance')    :accessDenied(); // ← Étape D
+// ← Vue Lecteur : accès lecture seule (isLecteur()) en plus des managers habituels
+  else if (t==='actifs-it')    html=(canManIT()  || isLecteur())?renderActifs('IT')        :accessDenied(); // ← Étape C
+  else if (t==='actifs-fin')   html=(canManFin() || isLecteur())?renderActifs('Finance')   :accessDenied(); // ← Étape C
+  else if (t==='prets-it')     html=(canManIT()  || isLecteur())?renderPrets('IT')         :accessDenied(); // ← Étape D
+  else if (t==='prets-fin')    html=(canManFin() || isLecteur())?renderPrets('Finance')    :accessDenied(); // ← Étape D
   else if (t==='utilisateurs') html=renderUtilisateurs();
   else if (t==='params')       html=isAdmin()   ?renderParams()            :accessDenied();
   c.innerHTML=html;
