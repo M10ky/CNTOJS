@@ -122,7 +122,7 @@ const canManIT    = () => isAdmin() || isSupportIT();
 const canManFin   = () => isAdmin() || isResFin();
 const canValidIT  = () => canManIT();
 const canValidFin = () => canManFin();
-const canSeeHist  = () => isAdmin() || isLecteur(); // Lecteur accède à Historique + Rapports + Amortissement
+const canSeeHist  = () => isAdmin() || isSupportIT() || isResFin() || isLecteur();sAdmin() || isLecteur(); // Lecteur accède à Historique + Rapports + Amortissement
 const canDemIT    = () => !isLecteur() && canSeeIT();  // Lecteur ne peut pas créer de demandes
 const canDemFin   = () => !isLecteur() && canSeeFin();
 
