@@ -226,7 +226,7 @@ window.submitMvt = async (typeStr) => {
           // FIX (Point 1) : la sortie d'un produit non-amortissable est valorisée
           // au CUMP réel (coût moyen des entrées), plus jamais via `prod.prix`
           // (champ manuel, rarement configuré, déconnecté des prix d'entrée réels).
-          valeur: effectiveQty * (typeStr === 'Entrée' ? prixUnit : getCUMPProduit(prodId)),
+          valeur: Math.round(effectiveQty * (typeStr === 'Entrée' ? prixUnit : getCUMPProduit(prodId))),
           dept,
           user_name: user,
           user_id: userId,
