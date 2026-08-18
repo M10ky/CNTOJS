@@ -636,8 +636,15 @@ function renderModalEditActif() {
   const color = a.dept === 'IT' ? '#4f46e5' : '#10b981';
 
   const body = `
-    <div class="form-row"><label class="form-lbl">Actif</label>
-      <input value="${a.produit_nom} — ${a.id}" disabled class="field-readonly" style="font-weight:700"></div>
+    <div class="form-row"><label class="form-lbl">Produit</label>
+      <input value="${escQ(a.produit_nom || '')}" disabled class="field-readonly" style="font-weight:700"></div>
+    <div class="form-row"><label class="form-lbl">Numéro de série / N° Inventaire</label>
+      <input id="f-actif-serial" type="text" value="${escQ(a.id)}" style="font-weight:700;font-family:var(--mono,monospace)">
+      <div style="font-size:10.5px;color:#b45309;margin-top:3px">
+        <i class="ti ti-alert-triangle" style="vertical-align:middle"></i>
+        Modification sensible : met à jour aussi les mouvements et prêts liés. Une confirmation sera demandée.
+      </div>
+    </div>
     <div class="form-2col">
       <div class="form-row"><label class="form-lbl">Valeur d'achat (MGA)</label>
         <input id="f-actif-valach" type="number" min="0" value="${a.valeur_achat || 0}"></div>
@@ -686,29 +693,130 @@ function renderModalEditActif() {
 window.submitEditActif = async (actifId) => {
   const a = (ST.actifs || []).find(x => x.id === actifId);
   if (!a) return;
-  const valAch     = parseFloat(document.getElementById('f-actif-valach')?.value) || 0;
-  const dtAch      = document.getElementById('f-actif-dtach')?.value || null;
-  const fournisseur= document.getElementById('f-actif-fourn')?.value || null;
-  const duree      = parseInt(document.getElementById('f-actif-duree')?.value) || 36;
-  const residuelle = parseFloat(document.getElementById('f-actif-residuelle')?.value) || 0;
+  const valAch      = parseFloat(document.getElementById('f-actif-valach')?.value) || 0;
+  const dtAch       = document.getElementById('f-actif-dtach')?.value || null;
+  const fournisseur = document.getElementById('f-actif-fourn')?.value || null;
+  const duree       = parseInt(document.getElementById('f-actif-duree')?.value) || 36;
+  const residuelle  = parseFloat(document.getElementById('f-actif-residuelle')?.value) || 0;
+  const newSerial   = (document.getElementById('f-actif-serial')?.value || '').trim();
 
+  if (!newSerial) {
+    showToast('Le numéro de série / N° Inventaire est obligatoire', 'err'); return;
+  }
   if (residuelle > valAch) {
     showToast('La valeur résiduelle ne peut pas dépasser la valeur d\'achat', 'err'); return;
   }
 
-  try {
-    const { error } = await db.from('actifs_individuels').update({
-      valeur_achat:        valAch,
-      date_achat:          dtAch,
-      fournisseur,
-      duree_amortissement: duree,
-      valeur_residuelle:   residuelle,
-    }).eq('id', actifId);
-    if (error) throw error;
-    closeModal();
-    showToast(`Actif "${actifId}" mis à jour`);
-    await loadActifs(); render();
-  } catch (err) { showToast('Erreur : ' + err.message, 'err'); }
+  const serialChanged = newSerial !== actifId;
+
+  const doUpdate = async () => {
+    try {
+      if (!serialChanged) {
+        // Mise à jour classique (sans changement d'id)
+        const { error } = await db.from('actifs_individuels').update({
+          valeur_achat:        valAch,
+          date_achat:          dtAch,
+          fournisseur,
+          duree_amortissement: duree,
+          valeur_residuelle:   residuelle,
+        }).eq('id', actifId);
+        if (error) throw error;
+        closeModal();
+        showToast(`Actif "${actifId}" mis à jour`);
+        await loadActifs(); render();
+        return;
+      }
+
+      // ── Changement de numéro de série (id) ──────────────────
+      // 1. Unicité
+      const { data: existing, error: chkErr } = await db
+        .from('actifs_individuels')
+        .select('id')
+        .eq('id', newSerial)
+        .maybeSingle();
+      if (chkErr) throw chkErr;
+      if (existing) {
+        showToast(`Le numéro « ${newSerial} » existe déjà`, 'err');
+        return;
+      }
+
+      // 2. Note d'audit
+      const note = buildActifNote(a, `Numéro de série modifié de ${actifId} vers ${newSerial}`);
+
+      // 3. Insérer la copie avec le nouvel id (évite de casser les FK éventuelles)
+      const newRow = {
+        id:                  newSerial,
+        produit_id:          a.produit_id,
+        produit_nom:         a.produit_nom,
+        categorie:           a.categorie || '',
+        dept:                a.dept,
+        emplacement:         a.emplacement || '',
+        date_entree:         a.date_entree || null,
+        valeur_achat:        valAch,
+        date_achat:          dtAch,
+        duree_amortissement: duree,
+        valeur_residuelle:   residuelle,
+        fournisseur:         fournisseur,
+        statut:              a.statut,
+        mouvement_entree_id: a.mouvement_entree_id || null,
+        observation:         note,
+      };
+      // Conserver d'éventuelles colonnes supplémentaires déjà présentes
+      if (a.date_sortie != null) newRow.date_sortie = a.date_sortie;
+
+      const { error: insErr } = await db.from('actifs_individuels').insert(newRow);
+      if (insErr) throw insErr;
+
+      // 4. Mettre à jour les références (mouvements + prêts)
+      const { error: mvtErr } = await db
+        .from('mouvements')
+        .update({ actif_id: newSerial })
+        .eq('actif_id', actifId);
+      if (mvtErr) throw mvtErr;
+
+      const { error: pretErr } = await db
+        .from('prets')
+        .update({ actif_numero: newSerial })
+        .eq('actif_numero', actifId);
+      if (pretErr) throw pretErr;
+
+      // 5. Supprimer l'ancienne ligne
+      const { error: delErr } = await db
+        .from('actifs_individuels')
+        .delete()
+        .eq('id', actifId);
+      if (delErr) throw delErr;
+
+      closeModal();
+      showToast(`Numéro de série modifié : ${actifId} → ${newSerial}`);
+      await loadActifs();
+      await loadPrets?.();
+      await loadMouvements?.();
+      render();
+    } catch (err) {
+      showToast('Erreur : ' + (err.message || err), 'err');
+      console.error('[submitEditActif]', err);
+    }
+  };
+
+  if (serialChanged) {
+    showConfirm(
+      'Modifier le numéro de série ?',
+      `<div style="margin-bottom:8px">Vous allez changer le numéro de série / N° Inventaire :</div>
+       <div style="font-family:var(--mono,monospace);font-size:13px;margin-bottom:10px">
+         <strong style="color:#b45309">${escQ(actifId)}</strong>
+         → <strong style="color:#059669">${escQ(newSerial)}</strong>
+       </div>
+       <div style="font-size:12px;color:var(--text2)">
+         Cette opération met à jour les mouvements et les prêts liés.
+         Les sorties et prêts déjà effectués restent intacts.
+       </div>`,
+      doUpdate,
+      '#f59e0b'
+    );
+  } else {
+    await doUpdate();
+  }
 };
 
 // ─── Historique d'un actif individuel (modal read-only) ────────
