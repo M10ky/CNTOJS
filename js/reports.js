@@ -200,16 +200,29 @@ window.setAmortAnneeFilter = (val) => { ST.search.inline.amortAnnee = val; rende
 
 // ═══ DASHBOARD ═══
 function renderDashboard() {
-  // Point 1 : valeur du stock global = stock actuel × CUMP, produits non
-  // amortissables uniquement (les amortissables sont valorisés via leur VNC
-  // dans le module Actifs — jamais mélangés ici).
+  // Point 1 : valeur du stock (non-amortissable) = stock actuel × CUMP.
+  // Conservé tel quel — réutilisé plus bas par le bloc Lecteur avec le
+  // libellé explicite "stock non-amortissable (CUMP)".
   const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
   const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
+
+  // FIX (KPI Dashboard non pertinentes) : "Valeur Stock IT/Finance" n'incluait
+  // que les produits non-amortissables (comme vIT/vFin ci-dessus), sous-évaluant
+  // silencieusement la valeur réelle par département. On ajoute la VNC des
+  // actifs individuels "vivants" (En service/En prêt) pour une vision
+  // patrimoine complète — cohérente avec le camembert chart-pie déjà corrigé.
+  const vncIT  = (ST.actifs||[]).filter(a=>a.dept==='IT'      && (a.statut==='En service'||a.statut==='En prêt')).reduce((s,a)=>s+(calcVNC(a)||0),0);
+  const vncFin = (ST.actifs||[]).filter(a=>a.dept==='Finance' && (a.statut==='En service'||a.statut==='En prêt')).reduce((s,a)=>s+(calcVNC(a)||0),0);
+  const totIT  = vIT  + vncIT;
+  const totFin = vFin + vncFin;
+  const nbActifsIT  = (ST.actifs||[]).filter(a=>a.dept==='IT'      && (a.statut==='En service'||a.statut==='En prêt')).length;
+  const nbActifsFin = (ST.actifs||[]).filter(a=>a.dept==='Finance' && (a.statut==='En service'||a.statut==='En prêt')).length;
+
   const alIT=alertsIT().length, alFin=alertsFin().length;
   const showP=canSeePrix();
   const kpis=[];
-  if (canSeeIT())  kpis.push(showP?{lbl:'Valeur Stock IT',val:fmt(vIT)+' MGA',s:`${ST.produits.filter(p=>p.dept==='IT').length} réf.`,c:'#4f46e5'}:{lbl:'Produits IT',val:ST.produits.filter(p=>p.dept==='IT').length,s:'références',c:'#4f46e5'});
-  if (canSeeFin()) kpis.push(showP?{lbl:'Valeur Stock Finance',val:fmt(vFin)+' MGA',s:`${ST.produits.filter(p=>p.dept==='Finance').length} réf.`,c:'#10b981'}:{lbl:'Produits Finance',val:ST.produits.filter(p=>p.dept==='Finance').length,s:'références',c:'#10b981'});
+  if (canSeeIT())  kpis.push(showP?{lbl:'Valeur Totale IT',val:fmt(totIT)+' MGA',s:`${ST.produits.filter(p=>p.dept==='IT').length} réf. stock${nbActifsIT?` · ${nbActifsIT} actif(s) amort.`:''}`,c:'#4f46e5'}:{lbl:'Produits IT',val:ST.produits.filter(p=>p.dept==='IT').length,s:'références',c:'#4f46e5'});
+  if (canSeeFin()) kpis.push(showP?{lbl:'Valeur Totale Finance',val:fmt(totFin)+' MGA',s:`${ST.produits.filter(p=>p.dept==='Finance').length} réf. stock${nbActifsFin?` · ${nbActifsFin} actif(s) amort.`:''}`,c:'#10b981'}:{lbl:'Produits Finance',val:ST.produits.filter(p=>p.dept==='Finance').length,s:'références',c:'#10b981'});
   if (canManIT())  kpis.push({lbl:'Alertes IT',val:alIT,s:alIT>0?'⚠ à traiter':'✓ Niveaux OK',c:alIT>0?'#ef4444':'#22c55e'});
   if (canManFin()) kpis.push({lbl:'Alertes Finance',val:alFin,s:alFin>0?'⚠ à traiter':'✓ Niveaux OK',c:alFin>0?'#ef4444':'#22c55e'});
   if (canManIT())  kpis.push({lbl:'Demandes IT en attente',val:attenteIT(),s:'à traiter',c:'#f59e0b'});
