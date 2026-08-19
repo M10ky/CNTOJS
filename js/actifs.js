@@ -727,65 +727,21 @@ window.submitEditActif = async (actifId) => {
         return;
       }
 
-      // ── Changement de numéro de série (id) ──────────────────
-      // 1. Unicité
-      const { data: existing, error: chkErr } = await db
-        .from('actifs_individuels')
-        .select('id')
-        .eq('id', newSerial)
-        .maybeSingle();
-      if (chkErr) throw chkErr;
-      if (existing) {
-        showToast(`Le numéro « ${newSerial} » existe déjà`, 'err');
-        return;
-      }
-
-      // 2. Note d'audit
+      // FIX (redondance numéro de série) : les 5 appels séquentiels
+      // (check + insert + 2×update + delete) n'étaient PAS transactionnels.
+      // Si le DELETE final échouait (RLS, réseau, contrainte), l'ancien
+      // numéro restait en base EN PLUS du nouveau → doublon persistant.
+      // Remplacé par rpc_renommer_actif : insert + updates + delete dans
+      // une seule transaction SQL, avec verrou FOR UPDATE sur la ligne
+      // source, comme les autres opérations multi-tables du projet.
       const note = buildActifNote(a, `Numéro de série modifié de ${actifId} vers ${newSerial}`);
 
-      // 3. Insérer la copie avec le nouvel id (évite de casser les FK éventuelles)
-      const newRow = {
-        id:                  newSerial,
-        produit_id:          a.produit_id,
-        produit_nom:         a.produit_nom,
-        categorie:           a.categorie || '',
-        dept:                a.dept,
-        emplacement:         a.emplacement || '',
-        date_entree:         a.date_entree || null,
-        valeur_achat:        valAch,
-        date_achat:          dtAch,
-        duree_amortissement: duree,
-        valeur_residuelle:   residuelle,
-        fournisseur:         fournisseur,
-        statut:              a.statut,
-        mouvement_entree_id: a.mouvement_entree_id || null,
-        observation:         note,
-      };
-      // Conserver d'éventuelles colonnes supplémentaires déjà présentes
-      if (a.date_sortie != null) newRow.date_sortie = a.date_sortie;
-
-      const { error: insErr } = await db.from('actifs_individuels').insert(newRow);
-      if (insErr) throw insErr;
-
-      // 4. Mettre à jour les références (mouvements + prêts)
-      const { error: mvtErr } = await db
-        .from('mouvements')
-        .update({ actif_id: newSerial })
-        .eq('actif_id', actifId);
-      if (mvtErr) throw mvtErr;
-
-      const { error: pretErr } = await db
-        .from('prets')
-        .update({ actif_numero: newSerial })
-        .eq('actif_numero', actifId);
-      if (pretErr) throw pretErr;
-
-      // 5. Supprimer l'ancienne ligne
-      const { error: delErr } = await db
-        .from('actifs_individuels')
-        .delete()
-        .eq('id', actifId);
-      if (delErr) throw delErr;
+      const { error: rpcErr } = await db.rpc('rpc_renommer_actif', {
+        p_old_id: actifId,
+        p_new_id: newSerial,
+        p_observation: note,
+      });
+      if (rpcErr) throw rpcErr;
 
       closeModal();
       showToast(`Numéro de série modifié : ${actifId} → ${newSerial}`);
