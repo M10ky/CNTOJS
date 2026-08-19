@@ -297,7 +297,7 @@ function renderDashboard() {
     ${canSeeHist()?`
     <div class="charts-grid">
       <div class="chart-card"><div class="chart-ttl">Mouvements par jour (période)</div><div class="bar-chart-wrap"><canvas id="chart-mvt"></canvas></div></div>
-      <div class="chart-card"><div class="chart-ttl">Répartition valeur stock (M MGA)</div><div class="bar-chart-wrap"><canvas id="chart-pie"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Répartition valeur totale — Stock + Actifs (M MGA)</div><div class="bar-chart-wrap"><canvas id="chart-pie"></canvas></div></div>
     </div>
     <div class="card">
       <div class="card-hd"><span class="card-ttl"><i class="ti ti-activity" style="color:var(--teal)"></i>Activités récentes (10 derniers mouvements)</span></div>
@@ -563,8 +563,18 @@ function drawCharts() {
     new Chart(document.getElementById('chart-mvt'),{type:'bar',data:{labels:dates.map(d=>new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),datasets:[{label:'Entrées',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Entrée').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#10b981',borderRadius:4},{label:'Sorties',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Sortie').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#ef4444',borderRadius:4}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
   if (document.getElementById('chart-pie')) {
-    const vIT=ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
-    const vFin=ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurStockActuel(p.id),0);
+    // FIX (Dashboard — camembert valeur stock incomplet) : getValeurStockActuel()
+    // renvoie 0 pour tout produit amortissable (règle métier volontaire — sa
+    // valorisation vit exclusivement dans le module Actifs via la VNC). Le
+    // camembert n'affichait donc que la valeur des produits NON amortissables,
+    // sous-évaluant silencieusement IT et Finance. On additionne désormais la
+    // VNC des actifs "En service"/"En prêt" par département — même calcul déjà
+    // appliqué correctement au bloc Lecteur (chart-lecteur-repart), désormais
+    // cohérent pour tous les rôles voyant ce Dashboard.
+    const vIT = ST.produits.filter(p=>p.dept==='IT').reduce((s,p)=>s+getValeurStockActuel(p.id),0)
+      + (ST.actifs||[]).filter(a=>a.dept==='IT'&&(a.statut==='En service'||a.statut==='En prêt')).reduce((s,a)=>s+(calcVNC(a)||0),0);
+    const vFin = ST.produits.filter(p=>p.dept==='Finance').reduce((s,p)=>s+getValeurStockActuel(p.id),0)
+      + (ST.actifs||[]).filter(a=>a.dept==='Finance'&&(a.statut==='En service'||a.statut==='En prêt')).reduce((s,a)=>s+(calcVNC(a)||0),0);
     const data=[],labels=[],colors=[];
     if (canSeeIT())  { data.push(Math.round(vIT/1e6));  labels.push('IT');      colors.push('#4f46e5'); }
     if (canSeeFin()) { data.push(Math.round(vFin/1e6)); labels.push('Finance'); colors.push('#10b981'); }
