@@ -357,7 +357,39 @@ window.submitAdd = async () => {
   } catch(err) { showToast('Erreur: '+err.message,'err'); }
 };
 
-// APRÈS
+// ═══ AJUSTEMENT MANUEL DE STOCK (modale ✏ Édition produit) ═══
+// Un ajustement manuel ne touche JAMAIS produits.stock en silence : il
+// génère un mouvement Entrée/Sortie visible dans l'historique, exactement
+// comme une réception ou une sortie normale. Valorisé au CUMP courant du
+// produit (Point 1 — jamais un champ "prix" catalogue). Réservé aux
+// produits non amortissables — appelant unique : submitEdit().
+async function createAjustementMouvement(prod, diff) {
+  const typeMvt = diff > 0 ? STATUS_MVT.ENTREE : STATUS_MVT.SORTIE;
+  const qty     = Math.abs(diff);
+  const cump    = getCUMPProduit(prod.id);
+  const mvtId   = genId(prod.dept === 'IT' ? 'MVT-IT' : 'MVT-FIN');
+
+  const { error } = await db.from('mouvements').insert({
+    id: mvtId,
+    date: todayStr(),
+    created_at: nowISO(),
+    type: typeMvt,
+    produit_id: prod.id,
+    produit_nom: prod.nom,
+    qty,
+    valeur: Math.round(qty * cump),
+    dept: prod.dept,
+    user_name: ST.profile?.name || 'Système',
+    user_id: ST.user?.id || null,
+    destination: '',
+    emplacement: prod.emplacement || '',
+    ref_document: '',
+    fournisseur: '',
+    observation: `Ajustement manuel de stock (${prod.stock} → ${prod.stock + diff}) via modale Édition`,
+  });
+  if (error) throw error;
+}
+
 window.submitEdit = async () => {
   const p=ST.modal.prod;
   const seuil  = parseInt(document.getElementById('f-edit-seuil')?.value)||p.seuil;
@@ -365,15 +397,71 @@ window.submitEdit = async () => {
   const valAch = parseInt(document.getElementById('f-edit-valach')?.value)||p.valeur_achat||0;
   const dtAch  = document.getElementById('f-edit-dtach')?.value || p.date_achat || null;
   const duree  = parseInt(document.getElementById('f-edit-duree')?.value)||p.duree_amortissement||36;
-  try {
-    // FIX : le champ catalogue "prix" n'est plus édité (cf. patch 4) — il
-    // n'est plus envoyé dans l'update pour ne jamais écraser silencieusement
-    // sa valeur en base avec un 0 fantôme issu d'un champ retiré du formulaire.
-    const { error } = await db.from('produits').update({ seuil, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, updated_at:nowISO() }).eq('id',p.id);
-    if (error) throw error;
-    closeModal(); showToast('Produit mis à jour');
-    await loadProduits(); render();
-  } catch(err) { showToast('Erreur: '+err.message,'err'); }
+
+  // ─── Stock (produits NON amortissables uniquement) ────────────
+  // #f-edit-stock n'existe que pour les produits non amortissables (cf.
+  // renderModal → stockBlock, app.js). Pour un amortissable, on ignore
+  // volontairement toute lecture de ce champ — le stock reste piloté à
+  // 100% par syncStockDepuisActifs() (Étape C), jamais par une saisie ici.
+  let nouveauStock = p.stock;
+  const stockInp = document.getElementById('f-edit-stock');
+  if (!p.is_amortissable && stockInp) {
+    const val = parseInt(stockInp.value);
+    if (isNaN(val) || val < 0) { showToast('Stock invalide', 'err'); return; }
+    nouveauStock = val;
+  }
+  const diffStock = nouveauStock - p.stock;
+
+  const doSubmit = () => withSubmitLock('#btn-submit-edit', async () => {
+    try {
+      // FIX : le champ catalogue "prix" n'est plus édité (cf. patch 4) — il
+      // n'est plus envoyé dans l'update pour ne jamais écraser silencieusement
+      // sa valeur en base avec un 0 fantôme issu d'un champ retiré du formulaire.
+      const updatePayload = { seuil, emplacement:empl, valeur_achat:valAch, date_achat:dtAch, duree_amortissement:duree, updated_at:nowISO() };
+      // Le stock n'est envoyé QUE s'il a réellement changé sur un produit non
+      // amortissable — jamais pour un amortissable (garde-fou explicite en
+      // plus du fait que #f-edit-stock n'existe même pas dans ce cas).
+      if (!p.is_amortissable && diffStock !== 0) updatePayload.stock = nouveauStock;
+
+      const { error } = await db.from('produits').update(updatePayload).eq('id', p.id);
+      if (error) throw error;
+
+      // Traçabilité : un ajustement manuel de stock est un mouvement comme
+      // un autre dans l'historique — jamais une écriture silencieuse sur
+      // produits.stock. Le mouvement est créé APRÈS l'update produit réussi ;
+      // en cas d'échec de l'insert mouvement, le stock reste modifié mais
+      // l'erreur remonte à l'utilisateur (cohérent avec le reste du fichier,
+      // qui n'a pas de RPC atomique dédiée pour ce cas simple mono-table).
+      if (!p.is_amortissable && diffStock !== 0) {
+        await createAjustementMouvement(p, diffStock);
+      }
+
+      closeModal();
+      showToast(diffStock !== 0
+        ? `Produit mis à jour — stock ajusté de ${diffStock > 0 ? '+' : ''}${diffStock} (${p.stock} → ${nouveauStock})`
+        : 'Produit mis à jour');
+      await Promise.all([loadProduits(), loadMouvements(), loadMouvementsEntrees()]);
+      render();
+    } catch(err) { showToast('Erreur: '+err.message,'err'); }
+  });
+
+  // Confirmation si l'écart est important (> 20% du stock actuel OU > 10 unités)
+  if (diffStock !== 0) {
+    const pct = p.stock > 0 ? Math.abs(diffStock) / p.stock * 100 : 100;
+    const ecartImportant = Math.abs(diffStock) > 10 || pct > 20;
+    if (ecartImportant) {
+      showConfirm(
+        `Confirmer l'ajustement de stock ?`,
+        `Le stock de <strong>${p.nom}</strong> passera de <strong>${p.stock}</strong> à
+         <strong>${nouveauStock}</strong> (${diffStock > 0 ? '+' : ''}${diffStock}).<br>
+         <span style="font-size:11px;color:var(--text3)">Cet écart est important — vérifiez la saisie avant de confirmer.</span>`,
+        doSubmit,
+        '#f59e0b'
+      );
+      return;
+    }
+  }
+  doSubmit();
 };
 
 window.deleteProduct = async (id, dept, nom) => {
@@ -393,6 +481,48 @@ window.openEditProduct = (id) => {
   if (!p) return;
   if (p.dept==='IT'&&!canManIT()||p.dept==='Finance'&&!canManFin()) return;
   ST.modal={type:'edit',prod:p,dept:p.dept}; renderModal();
+};
+
+// ─── Aperçu en direct de l'écart de stock (modale ✏ Édition) ───
+// Purement visuel — la logique de confirmation/validation réelle vit dans
+// submitEdit() (stock.js), qui recalcule le même écart côté soumission et
+// ne fait jamais confiance à ce qui est affiché ici.
+window.updateEditStockHint = (ancienStock) => {
+  const inp = document.getElementById('f-edit-stock');
+  const hintEl = document.getElementById('f-edit-stock-hint');
+  if (!inp || !hintEl) return;
+  const nouveau = parseInt(inp.value);
+  if (isNaN(nouveau) || nouveau < 0 || nouveau === ancienStock) { hintEl.innerHTML = ''; return; }
+
+  const diff = nouveau - ancienStock;
+  const pct  = ancienStock > 0 ? Math.abs(diff) / ancienStock * 100 : 100;
+  const ecartImportant = Math.abs(diff) > 10 || pct > 20;
+  const sign = diff > 0 ? '+' : '';
+
+  hintEl.innerHTML = `<span style="color:${diff>0?'#16a34a':'#dc2626'};font-weight:700">${sign}${diff}</span>
+    <span style="color:var(--text3)">(${diff>0?'Entrée':'Sortie'} d'ajustement à l'enregistrement)</span>
+    ${ecartImportant ? '<br><span style="color:#b45309"><i class="ti ti-alert-triangle"></i> écart important — une confirmation sera demandée</span>' : ''}`;
+};
+
+// ─── Aperçu en direct de l'écart de stock (modale ✏ Édition) ───
+// Purement visuel — la logique de confirmation/validation réelle vit dans
+// submitEdit() (stock.js), qui recalcule le même écart côté soumission et
+// ne fait jamais confiance à ce qui est affiché ici.
+window.updateEditStockHint = (ancienStock) => {
+  const inp = document.getElementById('f-edit-stock');
+  const hintEl = document.getElementById('f-edit-stock-hint');
+  if (!inp || !hintEl) return;
+  const nouveau = parseInt(inp.value);
+  if (isNaN(nouveau) || nouveau < 0 || nouveau === ancienStock) { hintEl.innerHTML = ''; return; }
+
+  const diff = nouveau - ancienStock;
+  const pct  = ancienStock > 0 ? Math.abs(diff) / ancienStock * 100 : 100;
+  const ecartImportant = Math.abs(diff) > 10 || pct > 20;
+  const sign = diff > 0 ? '+' : '';
+
+  hintEl.innerHTML = `<span style="color:${diff>0?'#16a34a':'#dc2626'};font-weight:700">${sign}${diff}</span>
+    <span style="color:var(--text3)">(${diff>0?'Entrée':'Sortie'} d'ajustement à l'enregistrement)</span>
+    ${ecartImportant ? '<br><span style="color:#b45309"><i class="ti ti-alert-triangle"></i> écart important — une confirmation sera demandée</span>' : ''}`;
 };
 
 // ═══ CRUD DEMANDES ═══
@@ -817,9 +947,32 @@ function renderModal() {
     title=`✏️ Modifier — ${p.nom}`;
     const selEmpl=e=>`<option value="${e}" ${e===(p.emplacement||'')?'selected':''}>${e}</option>`;
     const taux=tauxLineaire(p.duree_amortissement);
+
+    // ─── Bloc Stock ─────────────────────────────────────────────
+    // Amortissable : stock en LECTURE SEULE — il est recalculé par
+    // syncStockDepuisActifs() (actifs.js) depuis le nombre d'actifs
+    // "En service". Une saisie manuelle ici désynchroniserait Inventaire
+    // ↔ Actifs, exactement le bug que syncStockDepuisActifs() corrige
+    // ailleurs. Non-amortissable : champ éditable, avec un aperçu de
+    // l'écart mis à jour en direct (updateEditStockHint ci-dessous).
+    const stockBlock = p.is_amortissable
+      ? `<div class="form-row">
+          <label class="form-lbl">Stock actuel</label>
+          <input value="${p.stock}" disabled class="field-readonly" style="font-weight:700">
+          <div style="margin-top:5px;font-size:11px;color:var(--text3)">
+            <i class="ti ti-lock"></i> Produit à suivi individuel amortissable : le stock est calculé
+            automatiquement à partir du nombre d'actifs « En service » (module Actifs). Non modifiable ici.
+          </div>
+        </div>`
+      : `<div class="form-row">
+          <label class="form-lbl">Stock actuel <span class="req">*</span></label>
+          <input id="f-edit-stock" type="number" min="0" value="${p.stock}" oninput="updateEditStockHint(${p.stock})">
+          <div id="f-edit-stock-hint" style="margin-top:5px;font-size:11px;min-height:14px"></div>
+        </div>`;
+
     body=`
       <div class="form-row"><label class="form-lbl">Produit</label><input value="${p.nom}" disabled class="field-readonly" style="font-weight:700"></div>
-// APRÈS
+      ${stockBlock}
       <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Seuil critique</label><input id="f-edit-seuil" type="number" min="0" value="${p.seuil||5}"></div>
         <div class="form-row"><label class="form-lbl">Emplacement</label><select id="f-edit-empl">${(ST.params.emplacements.length?ST.params.emplacements:['Stock Principal']).map(selEmpl).join('')}</select></div>
@@ -847,7 +1000,7 @@ function renderModal() {
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
-        ${btn('✓ Enregistrer',color,false,'submitEdit()')}</div>`;
+        <button id="btn-submit-edit" class="btn btn-solid" style="background:${color};border-color:${color}" onclick="submitEdit()">✓ Enregistrer</button></div>`;
   }
   const ov=document.createElement('div');
   ov.id='modal-el'; ov.className='overlay';
