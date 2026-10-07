@@ -97,6 +97,31 @@ window.toggleProductActif = async (id, currentlyActif) => {
   );
 };
 
+// ═══ DATE MANUELLE DE TRANSACTION ═══
+// Règle métier : date manuelle pour mouvements historiques.
+// - Champ vide ou égal à aujourd'hui → comportement historique inchangé
+//   (todayStr() + nowISO()).
+// - Date passée → date = jour choisi ; created_at = jour choisi + heure
+//   actuelle (heure locale), pour conserver l'ordre d'insertion dans la journée.
+// - Date future → refusée.
+// Date locale (et non UTC) : évite qu'à Madagascar (UTC+3) le défaut
+// affiche « hier » entre 00h et 03h.
+function localTodayStr() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function resolveMvtDate(dateStr) {
+  const today = localTodayStr();
+  if (!dateStr || dateStr === today) return { date: todayStr(), ts: nowISO() };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { error: 'Date de transaction invalide' };
+  if (dateStr > today) return { error: 'La date de la transaction ne peut pas être dans le futur' };
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const n  = new Date();
+  const dt = new Date(y, m - 1, d, n.getHours(), n.getMinutes(), n.getSeconds());
+  if (dt.getDate() !== d) return { error: 'Date de transaction invalide' };
+  return { date: dateStr, ts: dt.toISOString() };
+}
+
 // ═══ CRUD MOUVEMENTS ═══
 window.submitMvt = async (typeStr) => {
   if (ST.isSubmitting) { showToast('Une opération est déjà en cours…', 'err'); return; }
@@ -116,6 +141,10 @@ window.submitMvt = async (typeStr) => {
   const obs      = document.getElementById('f-obs')?.value || '';
   const refDoc   = document.getElementById('f-ref-doc')?.value || '';
   const fournisseur = document.getElementById('f-fournisseur')?.value || '';
+
+  // Règle métier : date manuelle pour mouvements historiques
+  const mvtDate = resolveMvtDate(document.getElementById('f-date-mvt')?.value || '');
+  if (mvtDate.error) { showToast(mvtDate.error, 'err'); return; }
 
   if (!prodId) { showToast('Sélectionnez un produit','err'); return; }
 
@@ -158,7 +187,11 @@ window.submitMvt = async (typeStr) => {
 
   await withSubmitLock('#btn-submit-mvt', async () => {
     try {
-      const tsNow = nowISO();
+      const tsNow = nowISO();   // horodatage RÉEL : produits.updated_at reste « maintenant »
+      // Règle métier : date manuelle pour mouvements historiques —
+      // tsMvt/dateMvt ne servent QU'aux lignes de `mouvements` et aux actifs créés.
+      const tsMvt   = mvtDate.ts;
+      const dateMvt = mvtDate.date;
       const mvtId = genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN');
 
       // FIX (désynchronisation Inventaire ↔ Actifs) : pour une Entrée
@@ -185,7 +218,7 @@ window.submitMvt = async (typeStr) => {
             return;
           }
         }
-        entreeActifsResult = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit);
+        entreeActifsResult = await createActifUnits(prod, qty, mvtId, empl, manualSerials, prixUnit, mvtDate);
         if (!entreeActifsResult.ok) {
           showToast(`Échec de la création des actifs — aucune écriture effectuée : ${entreeActifsResult.message || 'Erreur inconnue'}`, 'err');
           return;
@@ -217,8 +250,8 @@ window.submitMvt = async (typeStr) => {
       if (!(typeStr === 'Sortie' && selectedActifIds.length > 0)) {
         const { error: mErr } = await db.from('mouvements').insert({
           id: mvtId,
-          date: todayStr(),
-          created_at: tsNow,
+          date: dateMvt,        // Règle métier : date manuelle pour mouvements historiques
+          created_at: tsMvt,
           type: typeStr,
           produit_id: prodId,
           produit_nom: prod.nom,
@@ -258,8 +291,8 @@ window.submitMvt = async (typeStr) => {
           const actif = ST.actifs.find(a => a.id === actifId);
           return {
             id: genId(dept==='IT'?'MVT-IT':'MVT-FIN'),
-            date: todayStr(),
-            created_at: nowISO(),
+            date: dateMvt,        // Règle métier : date manuelle pour mouvements historiques
+            created_at: tsMvt,
             type: 'Sortie',
             produit_id: prodId,
             produit_nom: prod.nom,
@@ -817,6 +850,11 @@ function renderModal() {
       <div class="form-2col">
         <div class="form-row"><label class="form-lbl">Département</label><input value="${dept}" disabled class="field-readonly" style="font-weight:700;color:${color}"></div>
         <div class="form-row"><label class="form-lbl">Type d'opération</label><input value="${iE?'Entrée':'Sortie'}" disabled class="field-readonly" style="font-weight:700;color:${iE?'#16a34a':'#dc2626'}"></div>
+      </div>
+      <!-- Règle métier : date manuelle pour mouvements historiques -->
+      <div class="form-row"><label class="form-lbl">Date de la transaction</label>
+        <input id="f-date-mvt" type="date" value="${localTodayStr()}" max="${localTodayStr()}">
+        <div style="font-size:10.5px;color:var(--text3);margin-top:3px">Aujourd'hui par défaut — choisissez une date passée pour saisir un ancien mouvement.</div>
       </div>
       <div class="form-row"><label class="form-lbl">Produit <span class="req">*</span></label>
         <select id="f-prod" onchange="onMvtFieldChange()">

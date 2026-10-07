@@ -104,7 +104,10 @@ window.getHistoriqueActif = (actifId) => {
 // jamais configuré, donc à 0) produisait des actifs avec un prix unitaire vide.
 // submitMvt() transmet désormais bien prixUnit (cf. stock.js → submitMvt), et ce
 // prix est utilisé ci-dessous SANS repli sur le catalogue.
-window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = [], prixUnit = null) => {
+// mvtDate = { date:'YYYY-MM-DD', ts:ISO } issu de resolveMvtDate() (stock.js).
+// Règle métier : date manuelle pour mouvements historiques — l'actif est
+// daté (entrée + début d'amortissement) à la date réelle de la transaction.
+window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = [], prixUnit = null, mvtDate = null) => {
   try {
     // Préfixe de nomenclature pour ce produit (dept + catégorie) — réutilisé
     // pour la colonne 'prefix' de serial_sequences ET pour générer chaque ID.
@@ -141,7 +144,7 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = 
         categorie:           prod.categorie            || '',
         dept:                prod.dept,
         emplacement:         emplacement || prod.emplacement || '',
-        date_entree:         now,
+        date_entree:         mvtDate?.ts || now,
         // FIX (corrections finales — pt.3) : valeur_achat = TOUJOURS le prix unitaire
         // de cette entrée précise (prixUnit), jamais celui du produit catalogue. Un
         // même produit peut être réceptionné à des prix différents au fil du temps ;
@@ -155,7 +158,7 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = 
         // (même valeur que date_entree, tronquée à la date), et non plus la date_achat
         // générique du produit catalogue. Chaque actif amortit donc à partir de sa
         // propre date d'acquisition réelle.
-        date_achat:          now.slice(0, 10),
+        date_achat:          mvtDate?.date || now.slice(0, 10),
         duree_amortissement: prod.duree_amortissement  || 36,
         statut:              'En service',
         mouvement_entree_id: mvtId,
