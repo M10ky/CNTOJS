@@ -127,7 +127,8 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = 
     if (seqRErr) throw seqRErr;
     if (seqRow) lastSeq = seqRow.current_seq || 0;
 
-    const year = new Date().getFullYear();
+    // Règle métier : l'année du numéro suit la date de la transaction (mvtDate, patch d'hier)
+    const year = mvtDate?.date ? Number(mvtDate.date.slice(0, 4)) : new Date().getFullYear();
     const now  = nowISO();
     const actifs = [];
 

@@ -151,8 +151,12 @@ function getValeurTotaleProduit(produitId) {
 // Sert de base de valorisation pour les sorties de produits NON
 // amortissables (remplace l'ancien repli sur produits.prix, un champ
 // manuel déconnecté des prix d'entrée réels).
-function getCUMPProduit(produitId) {
-  const entrees  = (ST.mouvementsEntrees || []).filter(m => m.produit_id === produitId);
+// asOfISO (optionnel) : CUMP « à la date D » — seules les entrées <= D comptent.
+// Sans argument : comportement inchangé (tous les appels existants).
+function getCUMPProduit(produitId, asOfISO = null) {
+  const asOf = asOfISO ? new Date(asOfISO).getTime() : null;
+  const entrees  = (ST.mouvementsEntrees || []).filter(m =>
+    m.produit_id === produitId && (asOf === null || new Date(m.created_at).getTime() <= asOf));
   const totalQty = entrees.reduce((s, m) => s + (m.qty || 0), 0);
   const totalVal = entrees.reduce((s, m) => s + (m.valeur || 0), 0);
   if (totalQty <= 0) return 0;

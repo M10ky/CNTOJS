@@ -66,7 +66,7 @@ async function loadAllProfiles() {
 async function loadMouvementsEntrees() {
   const { data, error } = await db
     .from('mouvements')
-    .select('produit_id, qty, valeur')
+    .select('produit_id, qty, valeur, created_at')   // created_at : CUMP daté
     .eq('type', 'Entrée');
   if (error) { console.error('[loadMouvementsEntrees]', error); return; }
   ST.mouvementsEntrees = data || [];
@@ -106,20 +106,94 @@ window.toggleProductActif = async (id, currentlyActif) => {
 // - Date future → refusée.
 // Date locale (et non UTC) : évite qu'à Madagascar (UTC+3) le défaut
 // affiche « hier » entre 00h et 03h.
-function localTodayStr() {
-  const d = new Date(), p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+// Format attendu par <input type="datetime-local"> : YYYY-MM-DDTHH:MM (heure locale)
+function toLocalInputStr(d = new Date()) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-function resolveMvtDate(dateStr) {
-  const today = localTodayStr();
-  if (!dateStr || dateStr === today) return { date: todayStr(), ts: nowISO() };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { error: 'Date de transaction invalide' };
-  if (dateStr > today) return { error: 'La date de la transaction ne peut pas être dans le futur' };
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const n  = new Date();
-  const dt = new Date(y, m - 1, d, n.getHours(), n.getMinutes(), n.getSeconds());
-  if (dt.getDate() !== d) return { error: 'Date de transaction invalide' };
-  return { date: dateStr, ts: dt.toISOString() };
+
+// inputEl = <input id="f-date-mvt"> (datetime-local).
+// Retourne { date, ts, manual } ou { error }.
+// manual=false → comportement historique (todayStr() + nowISO()).
+function resolveMvtDate(inputEl) {
+  const raw = inputEl?.value || '';
+  // Vide, ou valeur par défaut non touchée → heure réelle, à la seconde près
+  if (!raw || raw === inputEl.defaultValue) return { date: todayStr(), ts: nowISO(), manual: false };
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) return { error: 'Date de transaction invalide' };
+  const dt = new Date(raw);                       // datetime-local sans fuseau = heure locale
+  if (isNaN(dt.getTime())) return { error: 'Date de transaction invalide' };
+  if (dt.getTime() > Date.now() + 60000) return { error: 'La date et l\'heure de la transaction ne peuvent pas être dans le futur' };
+  return { date: raw.slice(0, 10), ts: dt.toISOString(), manual: true };
+}
+
+// ═══ COHÉRENCE CHRONOLOGIQUE D'UNE SORTIE DATÉE ═══
+// Règle métier : une sortie ne doit pas rendre le solde négatif à un instant T,
+// ni casser une sortie postérieure déjà saisie.
+// - Amortissable : date de sortie >= date_entree de chaque actif choisi.
+// - Non amortissable : simulation du solde dans le temps. Solde initial =
+//   stock actuel − net des mouvements connus (absorbe les produits « legacy »).
+//   On ne bloque que les violations CAUSÉES par la nouvelle ligne
+//   (un historique déjà incohérent ne bloque pas toute nouvelle saisie).
+async function verifierCoherenceSortie(prod, actifIds, qty, tsMvt) {
+  const t = new Date(tsMvt).getTime();
+
+  if (prod.is_amortissable === true) {
+    for (const id of actifIds) {
+      const a = (ST.actifs || []).find(x => x.id === id);
+      if (a && a.date_entree && new Date(a.date_entree).getTime() > t) {
+        return { ok: false, message: `Sortie impossible : ${id} est entré le ${fmtDT(a.date_entree)}, après la date saisie` };
+      }
+    }
+    return { ok: true };
+  }
+
+  // Lecture paginée (PostgREST plafonne à 1000 lignes par requête)
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from('mouvements')
+      .select('type, qty, created_at').eq('produit_id', prod.id)
+      .order('created_at', { ascending: true }).range(from, from + 999);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+
+  const sign = m => (m.type === 'Entrée' ? (m.qty || 0) : -(m.qty || 0));
+  let solde = prod.stock - rows.reduce((s, m) => s + sign(m), 0);
+
+  const ev = rows.map(m => ({ t: new Date(m.created_at).getTime(), d: sign(m), hyp: false }));
+  ev.push({ t, d: -qty, hyp: true });
+  ev.sort((a, b) => a.t - b.t || b.d - a.d);   // à égalité, les entrées passent avant
+  const hypIdx = ev.findIndex(e => e.hyp);
+
+  for (let i = 0; i < ev.length; i++) {
+    solde += ev[i].d;
+    // À partir de la ligne hypothétique : solde sans elle = solde + qty
+    if (i >= hypIdx && solde < 0 && solde + qty >= 0) {
+      return { ok: false, message: `Stock insuffisant à cette date : le solde passerait à ${solde} le ${fmtDT(new Date(ev[i].t).toISOString())}. Saisissez d'abord les entrées antérieures.` };
+    }
+  }
+  return { ok: true };
+}
+
+// Règle métier : après une saisie rétroactive, élargir la période affichée
+// pour que le mouvement soit visible (sinon l'utilisateur croit à un échec).
+function ensureMvtVisible(tsMvt) {
+  const t = new Date(tsMvt);
+  let changed = false;
+  if (ST.dateFrom && t < new Date(ST.dateFrom)) {
+    const d = new Date(t); d.setHours(0, 0, 0, 0);
+    ST.dateFrom = d.toISOString();
+    const el = document.getElementById('filter-from'); if (el) el.value = toLocalInputStr(d);
+    changed = true;
+  }
+  if (ST.dateTo && t > new Date(ST.dateTo)) {
+    const d = new Date(t); d.setHours(23, 59, 0, 0);
+    ST.dateTo = d.toISOString();
+    const el = document.getElementById('filter-to'); if (el) el.value = toLocalInputStr(d);
+    changed = true;
+  }
+  return changed;
 }
 
 // ═══ CRUD MOUVEMENTS ═══
@@ -143,7 +217,7 @@ window.submitMvt = async (typeStr) => {
   const fournisseur = document.getElementById('f-fournisseur')?.value || '';
 
   // Règle métier : date manuelle pour mouvements historiques
-  const mvtDate = resolveMvtDate(document.getElementById('f-date-mvt')?.value || '');
+  const mvtDate = resolveMvtDate(document.getElementById('f-date-mvt'));
   if (mvtDate.error) { showToast(mvtDate.error, 'err'); return; }
 
   if (!prodId) { showToast('Sélectionnez un produit','err'); return; }
@@ -192,6 +266,19 @@ window.submitMvt = async (typeStr) => {
       // tsMvt/dateMvt ne servent QU'aux lignes de `mouvements` et aux actifs créés.
       const tsMvt   = mvtDate.ts;
       const dateMvt = mvtDate.date;
+
+      // Règle métier : saisie rétroactive tracée dans `observation`
+      // (created_at est écrasé par la date choisie, on garde donc la date réelle de saisie).
+      const histTag = mvtDate.manual
+        ? `[Saisie rétroactive le ${fmtDT(tsNow)} par ${user}] `
+        : '';
+
+      // Règle métier : cohérence chronologique — blocage dur, sorties datées uniquement.
+      // Aucune écriture n'a encore eu lieu à ce stade.
+      if (typeStr === 'Sortie' && mvtDate.manual) {
+        const chk = await verifierCoherenceSortie(prod, selectedActifIds, effectiveQty, tsMvt);
+        if (!chk.ok) { showToast(chk.message, 'err'); return; }
+      }
       const mvtId = genId(dept === 'IT' ? 'MVT-IT' : 'MVT-FIN');
 
       // FIX (désynchronisation Inventaire ↔ Actifs) : pour une Entrée
@@ -259,7 +346,11 @@ window.submitMvt = async (typeStr) => {
           // FIX (Point 1) : la sortie d'un produit non-amortissable est valorisée
           // au CUMP réel (coût moyen des entrées), plus jamais via `prod.prix`
           // (champ manuel, rarement configuré, déconnecté des prix d'entrée réels).
-          valeur: Math.round(effectiveQty * (typeStr === 'Entrée' ? prixUnit : getCUMPProduit(prodId))),
+          // Règle métier : sortie historique valorisée au CUMP des entrées antérieures à sa date.
+          // Repli sur le CUMP global si aucune entrée antérieure (produit legacy).
+          valeur: Math.round(effectiveQty * (typeStr === 'Entrée'
+            ? prixUnit
+            : ((mvtDate.manual ? getCUMPProduit(prodId, tsMvt) : 0) || getCUMPProduit(prodId)))),
           dept,
           user_name: user,
           user_id: userId,
@@ -267,7 +358,7 @@ window.submitMvt = async (typeStr) => {
           emplacement: empl,
           ref_document: refDoc,
           fournisseur,
-          observation: obs
+          observation: histTag + obs
         });
         if (mErr) throw mErr;
       }
@@ -306,7 +397,7 @@ window.submitMvt = async (typeStr) => {
             emplacement: empl,
             ref_document: refDoc,
             fournisseur,
-            observation: obs || `Sortie individuelle — ${actifId}`
+            observation: histTag + (obs || `Sortie individuelle — ${actifId}`)
           };
         });
         const { error: mBatchErr } = await db.from('mouvements').insert(mvtRows);
@@ -340,8 +431,11 @@ window.submitMvt = async (typeStr) => {
       }
 
       closeModal();
+      // Règle métier : saisie rétroactive → élargir la période avant le rechargement
+      const periodeElargie = mvtDate.manual ? ensureMvtVisible(tsMvt) : false;
       await Promise.all([loadProduits(), loadMouvements(), loadMouvementsEntrees(), loadActifs()]);
       render();
+      if (periodeElargie) showToast(`Mouvement enregistré au ${fmtDT(tsMvt)} — période d'affichage élargie`);
 
     } catch (err) {
       console.error(err);
@@ -852,9 +946,9 @@ function renderModal() {
         <div class="form-row"><label class="form-lbl">Type d'opération</label><input value="${iE?'Entrée':'Sortie'}" disabled class="field-readonly" style="font-weight:700;color:${iE?'#16a34a':'#dc2626'}"></div>
       </div>
       <!-- Règle métier : date manuelle pour mouvements historiques -->
-      <div class="form-row"><label class="form-lbl">Date de la transaction</label>
-        <input id="f-date-mvt" type="date" value="${localTodayStr()}" max="${localTodayStr()}">
-        <div style="font-size:10.5px;color:var(--text3);margin-top:3px">Aujourd'hui par défaut — choisissez une date passée pour saisir un ancien mouvement.</div>
+      <div class="form-row"><label class="form-lbl">Date et heure de la transaction</label>
+        <input id="f-date-mvt" type="datetime-local" value="${toLocalInputStr()}" max="${toLocalInputStr()}" ${iE ? 'onchange="onMvtFieldChange()"' : ''}>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:3px">Maintenant par défaut — modifiez pour saisir un ancien mouvement.</div>
       </div>
       <div class="form-row"><label class="form-lbl">Produit <span class="req">*</span></label>
         <select id="f-prod" onchange="onMvtFieldChange()">
@@ -1107,7 +1201,9 @@ window.onMvtFieldChange = async () => {
             window._mvtCachedProdId = prodId;
           } catch(e) { window._mvtLastSeq = 0; }
         }
-        const year = new Date().getFullYear();
+        // Règle métier : l'année du numéro suit la date de la transaction
+        const dVal = document.getElementById('f-date-mvt')?.value || '';
+        const year = /^\d{4}/.test(dVal) ? Number(dVal.slice(0, 4)) : new Date().getFullYear();
         const suggestions = [];
         for (let i = 0; i < qty; i++) {
           // generateNomenclature est défini dans actifs.js (chargé après stock.js)
