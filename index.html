@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>. ARGOS .</title>
+<script>(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}var d=document.documentElement;d.setAttribute('data-theme',t);d.style.colorScheme=t;}catch(e){}})();</script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -24,6 +25,7 @@
 
 <!-- ═══ LOGIN ═══ -->
 <div class="login-page" id="login-wrap" style="display:none">
+  <button class="theme-toggle login-theme-toggle" type="button" onclick="toggleTheme()" title="Basculer mode clair / sombre" aria-label="Basculer le thème"><i class="ti ti-moon" data-theme-icon></i></button>
   <div class="login-card">
     <div class="login-logo-area">
       <div class="login-logo-main">
@@ -176,6 +178,7 @@
         <div id="filter-active-indicator" style="display:none" title="Filtre de période actif">
           <div class="tub-filter-active-dot"></div>
         </div>
+        <button class="theme-toggle" type="button" onclick="toggleTheme()" title="Basculer mode clair / sombre" aria-label="Basculer le thème"><i class="ti ti-moon" data-theme-icon></i></button>
         <div class="realtime-dot" title="Temps réel actif"></div>
       </div>
     </div>
@@ -189,6 +192,7 @@
 </div>
 
 <!-- Scripts -->
+<script src="js/theme.js"></script>
 <script src="js/constants.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/auth.js"></script>

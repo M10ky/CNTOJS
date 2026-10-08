@@ -265,7 +265,7 @@ function renderDashboard() {
     ];
 
     const alertBanner = (alertesMaj.ruptures>0 || alertesMaj.retard30>0)
-      ? `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626;margin-bottom:14px">
+      ? `<div class="info-banner" style="background:var(--err-bg);border-color:var(--err-bd);color:var(--err-fg);margin-bottom:14px">
           <i class="ti ti-alert-triangle" style="color:#dc2626"></i>
           <div>
             ${alertesMaj.ruptures>0?`<strong>${alertesMaj.ruptures}</strong> produit(s) en rupture critique. `:''}
@@ -280,7 +280,7 @@ function renderDashboard() {
     </tr>`).join('') || `<tr><td colspan="3" style="text-align:center;color:var(--text3);padding:14px">Aucune donnée</td></tr>`;
 
     lecteurBlock = `
-      <div class="info-banner" style="background:linear-gradient(135deg,#eef2ff,#f0fdf9);border-color:#c7d2fe;color:#3730a3;margin-bottom:14px">
+      <div class="info-banner" style="background:linear-gradient(135deg,var(--indigo-bg),var(--green-bg));border-color:var(--indigo-bd);color:var(--indigo-fg);margin-bottom:14px">
         <i class="ti ti-chart-infographic" style="color:#4f46e5"></i>
         <div><strong>Vue de pilotage stratégique.</strong> Synthèse consolidée IT + Finance — lecture seule.</div>
       </div>
@@ -374,7 +374,7 @@ function renderRapports() {
   const sansMvtRows = sansMvt.slice(0,10).map(p => `<tr>
     <td>${deptTag(p.dept)}</td>
     <td style="font-weight:600">${p.nom}</td>
-    <td><span class="tag" style="color:#475569;background:#f1f5f9">${p.categorie}</span></td>
+    <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${p.categorie}</span></td>
     <td style="color:var(--text3)">${p.stock}</td>
   </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:16px">Aucun produit dormant</td></tr>`;
 
@@ -499,14 +499,14 @@ function renderAmortissement() {
     return `<tr>
       <td>${deptTag(a.dept)}</td>
       <td><div style="font-weight:600">${a.produit_nom || '—'}</div><code class="actif-id" style="margin-top:2px;display:inline-block">${a.id}</code></td>
-      <td><span class="tag" style="color:#475569;background:#f1f5f9">${a.categorie || '—'}</span></td>
-      <td><span class="tag" style="color:#1e40af;background:#dbeafe">${a.emplacement || '—'}</span></td>
+      <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${a.categorie || '—'}</span></td>
+      <td><span class="tag" style="color:var(--blue-fg);background:var(--blue-bg)">${a.emplacement || '—'}</span></td>
       <td style="font-family:var(--mono);font-size:12px">${fmt(a.valeur_achat)} MGA</td>
       <td style="font-size:11px;color:var(--text3)">${fmtDate(a.date_achat)}</td>
       <td style="font-size:11px;color:var(--text3)">${(a.duree_amortissement/12).toFixed(1)}a · <strong>${taux}%/an</strong></td>
       <td style="font-size:11px;color:var(--text3)">${annuite?fmt(annuite)+' MGA/an':'—'}</td>
       <td>
-        <div style="font-weight:700;color:${c}">${vnc===0?'<span class="tag" style="color:#dc2626;background:#fef2f2">Totalement amorti</span>':fmt(vnc)+' MGA'}</div>
+        <div style="font-weight:700;color:${c}">${vnc===0?'<span class="tag" style="color:var(--err-fg);background:var(--err-bg)">Totalement amorti</span>':fmt(vnc)+' MGA'}</div>
         <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
           <div class="amort-bar" style="width:90px"><div class="amort-fill" style="width:${pct}%;background:${c}"></div></div>
           <span style="font-size:10px;color:${c};font-weight:700">${pct}%</span>
@@ -516,7 +516,7 @@ function renderAmortissement() {
     </tr>`;
   }).join('');
 
-  const totalsFooterRow = filtered.length ? `<tr style="background:#f8fafc;font-weight:800">
+  const totalsFooterRow = filtered.length ? `<tr style="background:var(--surface);font-weight:800">
     <td colspan="4" style="text-align:right">TOTAUX</td>
     <td style="font-family:var(--mono)">${fmt(totalAchat)} MGA</td>
     <td></td><td></td>
@@ -528,13 +528,13 @@ function renderAmortissement() {
   const noAmortRows = sansAmort.slice(0, 5).map(a => `<tr>
     <td>${deptTag(a.dept)}</td>
     <td style="font-weight:500">${a.produit_nom || '—'} <code class="actif-id">${a.id}</code></td>
-    <td><span class="tag" style="color:#475569;background:#f1f5f9">${a.categorie || '—'}</span></td>
+    <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${a.categorie || '—'}</span></td>
     <td>${isLecteur() ? '<span style="color:var(--text3);font-size:11px">—</span>' : btn('Configurer', '#4f46e5', true, `openEditActif('${a.id}')`)}</td>
   </tr>`).join('');
 
   return `<p class="page-title">Amortissement Linéaire des Actifs</p>
     <p class="page-sub">Valeur nette comptable (VNC) — Méthode linéaire, calculée actif par actif</p>
-    <div class="info-banner" style="background:#fffbeb;border-color:#fcd34d;color:#92400e">
+    <div class="info-banner" style="background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-fg)">
       <i class="ti ti-info-circle" style="color:#f59e0b"></i>
       <div><strong>Méthode linéaire :</strong> L'actif perd une valeur égale chaque année. Taux annuel = 100% / Durée en années.</div>
     </div>
@@ -568,7 +568,9 @@ function renderAmortissement() {
 // ═══ GRAPHIQUES ═══
 function drawCharts() {
   Object.values(Chart.instances||{}).forEach(c=>c.destroy());
-  const gc='#e2e8f0', tc='#94a3b8';
+  const cs=getComputedStyle(document.documentElement);
+  const gc=(cs.getPropertyValue('--border').trim()||'#e2e8f0');
+  const tc=(cs.getPropertyValue('--text3').trim()||'#94a3b8');
   const baseOpts={ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} };
   if (document.getElementById('chart-mvt')) {
     const mvtAll=[...fMvtIT(),...fMvtFin()];
@@ -625,7 +627,7 @@ function drawCharts() {
       if (anneeF && (a.date_achat||'').slice(0,4) !== anneeF) return false;
       return true;
     }).sort((a,b)=>(b.valeur_achat||0)-(a.valeur_achat||0)).slice(0,8);
-    new Chart(document.getElementById('chart-amort'),{type:'bar',data:{labels:actifsA.map(a=>(a.produit_nom||a.id).slice(0,14)),datasets:[{label:'Valeur acquisition',data:actifsA.map(a=>Math.round((a.valeur_achat||0)/1e6*100)/100),backgroundColor:'#e0e7ff',borderRadius:3},{label:'VNC',data:actifsA.map(a=>Math.round((calcVNC(a)||0)/1e6*100)/100),backgroundColor:'#4f46e5',borderRadius:3}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:8}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'M'},grid:{color:gc}}}}});
+    new Chart(document.getElementById('chart-amort'),{type:'bar',data:{labels:actifsA.map(a=>(a.produit_nom||a.id).slice(0,14)),datasets:[{label:'Valeur acquisition',data:actifsA.map(a=>Math.round((a.valeur_achat||0)/1e6*100)/100),backgroundColor:cs.getPropertyValue('--indigo-bg').trim()||'#e0e7ff',borderRadius:3},{label:'VNC',data:actifsA.map(a=>Math.round((calcVNC(a)||0)/1e6*100)/100),backgroundColor:'#4f46e5',borderRadius:3}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:8}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9},callback:v=>v+'M'},grid:{color:gc}}}}});
   }
   if (document.getElementById('chart-amort-pie')) {
     const ilA = ST.search.inline;

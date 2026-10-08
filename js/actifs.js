@@ -532,9 +532,9 @@ function renderActifs(dept) {
     return `<tr${a.statut === 'Réformé' ? ' class="row-inactif"' : ''}>
       <td style="font-weight:600;font-size:12.5px">${highlight(a.produit_nom, q)}</td>
       <td><code class="actif-id">${highlight(a.id, q)}</code></td>
-      <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(a.categorie, q)}</span></td>
+      <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${highlight(a.categorie, q)}</span></td>
       <td>${a.emplacement
-        ? `<span class="tag" style="color:#1e40af;background:#dbeafe;font-size:9.5px">${highlight(a.emplacement, q)}</span>`
+        ? `<span class="tag" style="color:var(--blue-fg);background:var(--blue-bg);font-size:9.5px">${highlight(a.emplacement, q)}</span>`
         : '<span style="color:var(--text3)">—</span>'
       }</td>
       <td>${fmtDate(a.date_entree)}</td>
@@ -816,7 +816,7 @@ window.openActifHistorique = (actifId) => {
     </div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
       ${a?.produit_nom || '—'} · Statut actuel : ${actifStatutBadge(a?.statut || '—')}
-      ${a?.observation ? `<div style="margin-top:8px;padding:8px 10px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);white-space:pre-line">${a.observation}</div>` : ''}
+      ${a?.observation ? `<div style="margin-top:8px;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:11px;color:var(--text2);white-space:pre-line">${a.observation}</div>` : ''}
     </div>
     <div style="overflow-x:auto"><table>
       <thead><tr>${['Date & Heure','Action','Qté','Valeur','Empl./Dest.','Agent','Détail'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>

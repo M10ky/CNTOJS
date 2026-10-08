@@ -175,29 +175,29 @@ function getValeurStockActuel(produitId) {
 }
 
 const statusTag = s => s==='Rupture'
-  ? `<span class="tag" style="color:#dc2626;background:#fef2f2">● Rupture</span>`
+  ? `<span class="tag" style="color:var(--err-fg);background:var(--err-bg)">● Rupture</span>`
   : s==='Critique'
-  ? `<span class="tag" style="color:#d97706;background:#fffbeb">▲ Critique</span>`
-  : `<span class="tag" style="color:#16a34a;background:#f0fdf4">✓ Dispo</span>`;
+  ? `<span class="tag" style="color:var(--warn-fg);background:var(--warn-bg)">▲ Critique</span>`
+  : `<span class="tag" style="color:var(--green-fg);background:var(--green-bg)">✓ Dispo</span>`;
 
 // ← ÉTAPE B : badge actif/inactif
 const actifBadge = p => isActif(p)
-  ? `<span class="tag" style="color:#16a34a;background:#dcfce7;font-size:9.5px">✓ Actif</span>`
-  : `<span class="tag" style="color:#94a3b8;background:#f1f5f9;font-size:9.5px">✕ Inactif</span>`;
+  ? `<span class="tag" style="color:var(--green-fg);background:var(--green-bg);font-size:9.5px">✓ Actif</span>`
+  : `<span class="tag" style="color:var(--text3);background:var(--kbd-bg);font-size:9.5px">✕ Inactif</span>`;
 
 const typeBadge = t => t==='Entrée'
-  ? `<span class="tag" style="color:#166534;background:#dcfce7">↓ Entrée</span>`
-  : `<span class="tag" style="color:#991b1b;background:#fee2e2">↑ Sortie</span>`;
+  ? `<span class="tag" style="color:var(--green-fg);background:var(--green-bg)">↓ Entrée</span>`
+  : `<span class="tag" style="color:var(--err-fg);background:var(--err-bg)">↑ Sortie</span>`;
 
 const statBadge = s => s==='Validé'
-  ? `<span class="tag" style="color:#166534;background:#dcfce7">✓ Validé</span>`
+  ? `<span class="tag" style="color:var(--green-fg);background:var(--green-bg)">✓ Validé</span>`
   : s==='Refusé'
-  ? `<span class="tag" style="color:#991b1b;background:#fee2e2">✕ Refusé</span>`
-  : `<span class="tag" style="color:#92400e;background:#fef3c7">⏳ En attente</span>`;
+  ? `<span class="tag" style="color:var(--err-fg);background:var(--err-bg)">✕ Refusé</span>`
+  : `<span class="tag" style="color:var(--warn-fg);background:var(--warn-bg)">⏳ En attente</span>`;
 
 const deptTag   = d => d==='IT'
-  ? `<span class="tag" style="color:#3730a3;background:#e0e7ff">IT</span>`
-  : `<span class="tag" style="color:#065f46;background:#d1fae5">Finance</span>`;
+  ? `<span class="tag" style="color:var(--indigo-fg);background:var(--indigo-bg)">IT</span>`
+  : `<span class="tag" style="color:var(--green-fg);background:var(--green-bg)">Finance</span>`;
 
 const urgBadge  = u => {
   const map={'Normale':'urg-normale','Urgente':'urg-urgente','Critique':'urg-critique'};
@@ -534,9 +534,9 @@ function showToast(msg, type='ok') {
   let el=document.getElementById('toast-el');
   if (!el) { el=document.createElement('div'); el.id='toast-el'; el.className='toast'; document.body.appendChild(el); }
   el.style.display='flex';
-  el.style.background=type==='err'?'#fef2f2':'#f0fdf4';
-  el.style.color=type==='err'?'#dc2626':'#16a34a';
-  el.style.border=`1px solid ${type==='err'?'#fecaca':'#bbf7d0'}`;
+  el.style.background=type==='err'?'var(--err-bg)':'var(--ok-bg)';
+  el.style.color=type==='err'?'var(--err-fg)':'var(--ok-fg)';
+  el.style.border=`1px solid ${type==='err'?'var(--err-bd)':'var(--ok-bd)'}`;
   el.innerHTML=(type==='err'?'<i class="ti ti-x"></i>':'<i class="ti ti-check"></i>')+' '+msg;
   ST.toastTimer=setTimeout(()=>{ el.style.display='none'; },3500);
 }

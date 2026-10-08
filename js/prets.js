@@ -90,14 +90,14 @@ function renderPrets(dept) {
   ];
 
   const alertBanner = enRetard.length > 0
-    ? `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
+    ? `<div class="info-banner" style="background:var(--err-bg);border-color:var(--err-bd);color:var(--err-fg)">
         <i class="ti ti-alert-triangle" style="color:#dc2626"></i>
         <div><strong>${enRetard.length} actif(s) en retard de restitution.</strong> Contactez les emprunteurs concernés.</div>
       </div>`
     : '';
 
   const perduBanner = perdus.length > 0
-    ? `<div class="info-banner" style="background:#f5f3ff;border-color:#c4b5fd;color:#6d28d9">
+    ? `<div class="info-banner" style="background:var(--violet-bg);border-color:var(--violet-bd);color:var(--violet-fg)">
         <i class="ti ti-alert-octagon" style="color:#7c3aed"></i>
         <div><strong>${perdus.length} actif(s) déclaré(s) perdu(s).</strong> Ces actifs ont été réformés automatiquement.</div>
       </div>`
@@ -142,9 +142,9 @@ function renderPrets(dept) {
     }
 
     const rowStyle = p.statut === STATUS_PRET.EN_RETARD
-      ? ' style="background:#fff5f5"'
+      ? ' style="background:var(--err-bg)"'
       : p.statut === STATUS_PRET.PERDU
-        ? ' style="background:#f5f3ff"'
+        ? ' style="background:var(--violet-bg)"'
         : (p.statut === STATUS_PRET.RETOURNE ? ' class="row-inactif"' : '');
 
     return `<tr${rowStyle}>

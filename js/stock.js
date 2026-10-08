@@ -765,7 +765,7 @@ function renderModalDemAttribution() {
     ov.innerHTML = `<div class="modal" onclick="event.stopPropagation()">
       <div class="modal-h"><span class="modal-ttl">Attribution — ${dem.produit}</span>
         <button class="close-btn" onclick="closeModal()">✕</button></div>
-      <div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
+      <div class="info-banner" style="background:var(--err-bg);border-color:var(--err-bd);color:var(--err-fg)">
         <i class="ti ti-alert-triangle"></i>
         <div><strong>${dispo.length}</strong> matériel(s) « En service » disponible(s), mais
         <strong>${dem.qty}</strong> demandé(s). Complétez le stock (entrée) ou ajustez la demande
@@ -887,7 +887,7 @@ function renderActifSortieSelector(prod, q='') {
   const indispo = tousLesActifsProduit.filter(a => a.statut !== STATUS_ACTIF.EN_SERVICE);
 
   if (!dispo.length) {
-    return `<div class="info-banner" style="background:#fef2f2;border-color:#fecaca;color:#dc2626">
+    return `<div class="info-banner" style="background:var(--err-bg);border-color:var(--err-bd);color:var(--err-fg)">
       <i class="ti ti-alert-triangle"></i>
       <div>Aucun matériel « En service » disponible pour ce produit${indispo.length ? ` (${indispo.length} déjà sorti / en prêt / hors service)` : ''}.</div>
     </div>`;
@@ -970,7 +970,7 @@ function renderModal() {
       ${!iE ? `<div id="f-actif-sortie-wrap"></div>` : ''}
       <div class="form-row">
         <label class="form-lbl">Opération réalisée par</label>
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:8px">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--green-bg);border:1.5px solid var(--green-bd);border-radius:8px">
           <div style="width:28px;height:28px;border-radius:50%;background:${ST.profile?.color||'var(--teal)'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">
             ${(ST.profile?.name||'?').charAt(0).toUpperCase()}
           </div>
@@ -1041,11 +1041,11 @@ function renderModal() {
       <div class="amort-toggle-row">
         <label class="form-lbl" style="cursor:pointer;display:flex;align-items:center;gap:8px;margin:0">
           <input type="checkbox" id="f-amort-chk" style="width:auto;accent-color:var(--teal);cursor:pointer">
-          <span style="font-size:12px;color:#065f46;font-weight:600">Suivi individuel amortissable</span>
+          <span style="font-size:12px;color:var(--green-fg);font-weight:600">Suivi individuel amortissable</span>
           <span style="font-size:10px;color:var(--text3);margin-left:2px">— génère une fiche CNTO-… à chaque entrée</span>
         </label>
       </div>
-      <div class="info-banner" style="margin-top:12px;font-size:11.5px;background:#f0fdf4;border-color:#bbf7d0;color:#065f46">
+      <div class="info-banner" style="margin-top:12px;font-size:11.5px;background:var(--green-bg);border-color:var(--green-bd);color:var(--green-fg)">
         <i class="ti ti-info-circle" style="color:#10b981"></i>
         <div><strong>Stock initialisé à 0.</strong> Les prix et valeurs sont définis lors des <strong>entrées de stock</strong>. Les paramètres financiers (valeur d'achat, durée d'amortissement) se configurent via ✏ dans l'inventaire.</div>
       </div>
@@ -1126,7 +1126,7 @@ function renderModal() {
                  ${p.is_amortissable ? 'checked' : ''}
                  onchange="updateAmortissable('${p.id}', this.checked)"
                  style="width:auto;accent-color:var(--teal);cursor:pointer">
-          <span style="font-size:12px;color:#065f46;font-weight:600">Suivi individuel amortissable</span>
+          <span style="font-size:12px;color:var(--green-fg);font-weight:600">Suivi individuel amortissable</span>
           <span style="font-size:10px;color:var(--text3);margin-left:2px">— génère une fiche numérotée CNTO-… par unité à chaque entrée</span>
         </label>
       </div>
@@ -1268,8 +1268,8 @@ const rows = allFiltered.map(p => {
   let html = `<tr${pActif ? '' : ' class="row-inactif"'}>
     <td><code style="font-size:9px">${highlight(p.id, q)}</code></td>
     <td style="font-weight:600;font-size:12.5px">${highlight(p.nom, q)}${!pActif ? '<br><span style="font-size:9.5px;color:#94a3b8">Produit inactif</span>' : ''}</td>
-    <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(p.categorie, q)}</span></td>
-    <td>${p.emplacement ? `<span class="tag" style="color:#1e40af;background:#dbeafe;font-size:9.5px">${highlight(p.emplacement, q)}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
+    <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${highlight(p.categorie, q)}</span></td>
+    <td>${p.emplacement ? `<span class="tag" style="color:var(--blue-fg);background:var(--blue-bg);font-size:9.5px">${highlight(p.emplacement, q)}</span>` : '<span style="color:var(--text3)">—</span>'}</td>
     <td><span class="stock-num" style="color:${sc}">${p.stock}</span>${(() => {
       // Badge de diagnostic (lecture seule, aucun recalcul ni écriture) :
       // signale un écart entre le stock du produit et le nombre réel
@@ -1277,7 +1277,7 @@ const rows = allFiltered.map(p => {
       if (!p.is_amortissable) return '';
       const nbReel = (ST.actifs||[]).filter(a => a.produit_id===p.id && a.statut!==STATUS_ACTIF.SORTI && a.statut!==STATUS_ACTIF.REFORME).length;
       if (nbReel === p.stock) return '';
-      return `<br><span class="tag" style="color:#dc2626;background:#fef2f2;font-size:8.5px;margin-top:2px" title="Stock inventaire (${p.stock}) ≠ actifs réellement disponibles (${nbReel})">⚠ ${nbReel} actif(s) réel(s)</span>`;
+      return `<br><span class="tag" style="color:var(--err-fg);background:var(--err-bg);font-size:8.5px;margin-top:2px" title="Stock inventaire (${p.stock}) ≠ actifs réellement disponibles (${nbReel})">⚠ ${nbReel} actif(s) réel(s)</span>`;
     })()}</td>
     <td style="color:var(--text3)">${p.seuil}</td>`;
 
@@ -1438,7 +1438,7 @@ function renderDem(dept) {
             ${btn('✕','#ef4444',true,`validDem('${dept}','${d.id}','Refusé')`)}
           </div>`
       : (d.statut==='En attente'?`<span class="readonly-badge"><i class="ti ti-clock"></i> En cours</span>`:'');
-    return `<tr${prodInactif&&d.statut==='En attente'?' style="background:#fffbeb"':''}>
+    return `<tr${prodInactif&&d.statut==='En attente'?' style="background:var(--warn-bg)"':''}>
       <td><code style="font-size:9px">${highlight(d.id,q)}</code></td>
       <td>${fmtDTSplit(d.created_at||d.date)}</td>
       <td style="font-weight:500;font-size:12.5px">${highlight(d.demandeur,q)}</td>
@@ -1476,8 +1476,8 @@ function renderAlertes(dept) {
   const rows=al.map(p=>`<tr>
     <td><span style="font-size:18px">${p.stock===0?'🔴':'🟠'}</span></td>
     <td><div style="font-weight:600">${p.nom}</div></td>
-    <td><span class="tag" style="color:#475569;background:#f1f5f9">${p.categorie}</span></td>
-    <td><span class="tag" style="color:#1e40af;background:#dbeafe">${p.emplacement||'—'}</span></td>
+    <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${p.categorie}</span></td>
+    <td><span class="tag" style="color:var(--blue-fg);background:var(--blue-bg)">${p.emplacement||'—'}</span></td>
     <td><span class="stock-num" style="color:${p.stock===0?'#dc2626':'#d97706'}">${p.stock}</span></td>
     <td style="color:var(--text3)">${p.seuil}</td>
     <td>${statusTag(getStatus(p))}</td>
@@ -1516,7 +1516,7 @@ function renderHistorique() {
   const rows=filtered.map(h=>`<tr>
     <td>${fmtDTSplit(h.created_at||h.date)}</td>
     <td>${deptTag(h.dept)}</td>
-    <td><span class="tag" style="color:${h.src==='Mouvement'?'#1d4ed8':'#7c3aed'};background:${h.src==='Mouvement'?'#dbeafe':'#ede9fe'}">${h.src}</span></td>
+    <td><span class="tag" style="color:${h.src==='Mouvement'?'var(--blue-fg)':'var(--violet-fg)'};background:${h.src==='Mouvement'?'var(--blue-bg)':'var(--violet-bg)'}">${h.src}</span></td>
     <td>${h.src==='Mouvement'?typeBadge(h.label):statBadge(h.label)}</td>
     <td style="font-weight:500">
       ${highlight(h.produit||h.produit_nom||'',q)}

@@ -110,12 +110,12 @@ function renderUtilisateurs() {
     'Utilisateur IT','Utilisateur Finance','Lecteur',
   ];
   const ROLE_COLORS = {
-    'Administrateur':      { c:'#6d28d9', bg:'#ede9fe' },
-    'Support IT':          { c:'#3730a3', bg:'#e0e7ff' },
-    'Responsable Finance': { c:'#065f46', bg:'#d1fae5' },
-    'Utilisateur IT':      { c:'#1e40af', bg:'#dbeafe' },
-    'Utilisateur Finance': { c:'#064e3b', bg:'#d1fae5' },
-    'Lecteur':             { c:'#92400e', bg:'#fef3c7' },
+    'Administrateur':      { c:'var(--violet-fg)', bg:'var(--violet-bg)' },
+    'Support IT':          { c:'var(--indigo-fg)', bg:'var(--indigo-bg)' },
+    'Responsable Finance': { c:'var(--green-fg)', bg:'var(--green-bg)' },
+    'Utilisateur IT':      { c:'var(--blue-fg)', bg:'var(--blue-bg)' },
+    'Utilisateur Finance': { c:'var(--green-fg)', bg:'var(--green-bg)' },
+    'Lecteur':             { c:'var(--warn-fg)', bg:'var(--warn-bg)' },
   };
 
   // ── Filtrage ──────────────────────────────────────────────
@@ -199,7 +199,7 @@ function renderUtilisateurs() {
 
   // ── Lignes du tableau ─────────────────────────────────────
   const rows = filtered.map(u => {
-    const rc     = ROLE_COLORS[u.role] || { c:'#475569', bg:'#f1f5f9' };
+    const rc     = ROLE_COLORS[u.role] || { c:'var(--text2)', bg:'var(--kbd-bg)' };
     const dLabel = u.dept === 'both' ? 'IT + Finance' : (u.dept || '—');
     const isSelf = u.id === ST.user?.id;
 
@@ -229,7 +229,7 @@ function renderUtilisateurs() {
           ${roleOpts}
         </select>
       </td>
-      <td><span class="tag" style="color:#475569;background:#f1f5f9">${highlight(dLabel, q)}</span></td>
+      <td><span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${highlight(dLabel, q)}</span></td>
       <td>
         <div style="display:flex;align-items:center;gap:6px">
           <span class="status-dot" style="background:${u.is_active ? '#22c55e' : '#94a3b8'}"></span>
@@ -273,15 +273,15 @@ function renderUtilisateurs() {
       </div>`
     ).join('')}</div>
 
-    <div class="card" style="background:#eff6ff;border-color:#bfdbfe;margin-bottom:12px">
-      <div style="padding:13px 16px;font-size:12px;color:#1e40af">
+    <div class="card" style="background:var(--info-bg);border-color:var(--info-bd);margin-bottom:12px">
+      <div style="padding:13px 16px;font-size:12px;color:var(--info-fg)">
         <i class="ti ti-info-circle" style="vertical-align:middle;margin-right:6px"></i>
         <strong>Inviter un utilisateur :</strong>
         Supabase → Authentication → Users → <em>Invite User</em>,
         puis insérer le profil dans <code>profiles</code> avec le même UUID et les champs :
         <code>name</code>, <code>role</code>, <code>dept</code>, <code>color</code>, <code>is_active</code>.
         <a href="https://supabase.com/dashboard" target="_blank"
-          style="margin-left:8px;color:#1d4ed8;font-weight:700;text-decoration:none">
+          style="margin-left:8px;color:var(--info-fg);font-weight:700;text-decoration:none">
           Ouvrir Supabase ↗
         </a>
       </div>
@@ -344,10 +344,10 @@ function renderParams() {
       <div class="tag-list">${mkList(ST.params.categoriesFin,'categoriesFin')}</div>
       <div class="tag-add-row"><input id="new-cat-fin" placeholder="Nouvelle catégorie Finance…" onkeydown="if(event.key==='Enter')addParam('categoriesFin','new-cat-fin')">${btn('Ajouter','#10b981',false,"addParam('categoriesFin','new-cat-fin')",'ti-plus')}</div>
     </div>
-    <div class="param-section" style="background:#fafbff">
+    <div class="param-section" style="background:var(--surface-2)">
       <div class="param-title"><i class="ti ti-info-circle" style="color:#6366f1"></i>Informations système</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:10px">
-        ${[['Produits IT',ST.produits.filter(p=>p.dept==='IT').length,'#4f46e5'],['Produits Finance',ST.produits.filter(p=>p.dept==='Finance').length,'#10b981'],['Utilisateurs',ST.allProfiles.length,'#f59e0b'],['Destinations',ST.params.destinations.length,'#00c9a7'],['Fournisseurs',(ST.params.fournisseurs||[]).length,'#0ea5e9']].map(([l,v,c])=>`<div style="background:#fff;border:1px solid var(--border);border-radius:9px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:${c}">${v}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${l}</div></div>`).join('')}
+        ${[['Produits IT',ST.produits.filter(p=>p.dept==='IT').length,'#4f46e5'],['Produits Finance',ST.produits.filter(p=>p.dept==='Finance').length,'#10b981'],['Utilisateurs',ST.allProfiles.length,'#f59e0b'],['Destinations',ST.params.destinations.length,'#00c9a7'],['Fournisseurs',(ST.params.fournisseurs||[]).length,'#0ea5e9']].map(([l,v,c])=>`<div style="background:var(--card);border:1px solid var(--border);border-radius:9px;padding:12px;text-align:center"><div style="font-size:22px;font-weight:800;color:${c}">${v}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${l}</div></div>`).join('')}
       </div>
     </div>`;
 }

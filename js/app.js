@@ -161,7 +161,7 @@ window.onSearchKeydown = (e) => {
 
 function updateSearchSelection(items) {
   items.forEach((el,i) => {
-    el.style.background = i===ST.searchSelectedIdx ? '#f0fdf9' : '';
+    el.style.background = i===ST.searchSelectedIdx ? 'var(--row-hover-tint)' : '';
     el.style.outline = i===ST.searchSelectedIdx ? '2px solid var(--teal)' : '';
     if (i===ST.searchSelectedIdx) el.scrollIntoView({block:'nearest'});
   });
@@ -192,10 +192,10 @@ function runSearch(query) {
       html += `<div class="search-section-header"><i class="ti ti-package" style="color:var(--teal)"></i>Produits <span class="count-badge">${prods.length}</span></div>`;
       html += prods.slice(0,8).map(p => {
         const st = getStatus(p);
-        const stColor = st==='Rupture'?'#dc2626':st==='Critique'?'#d97706':'#16a34a';
-        const stBg    = st==='Rupture'?'#fef2f2':st==='Critique'?'#fffbeb':'#f0fdf4';
+        const stColor = st==='Rupture'?'var(--err-fg)':st==='Critique'?'var(--warn-fg)':'var(--green-fg)';
+        const stBg    = st==='Rupture'?'var(--err-bg)':st==='Critique'?'var(--warn-bg)':'var(--green-bg)';
         const dColor  = p.dept==='IT'?'#4f46e5':'#10b981';
-        const dBg     = p.dept==='IT'?'#eef2ff':'#f0fdf4';
+        const dBg     = p.dept==='IT'?'var(--indigo-bg)':'var(--green-bg)';
         return `<div class="search-result-item" onclick="closeSearch();goto('${p.dept==='IT'?'stock-it':'stock-fin'}');setTimeout(()=>setInlineQuery('${escQ(p.nom)}'),200)">
           <div class="sri-icon" style="background:${dBg}"><i class="ti ti-package" style="color:${dColor}"></i></div>
           <div class="sri-main"><div class="sri-title">${highlight(p.nom,q)}</div>
@@ -204,7 +204,7 @@ function runSearch(query) {
           <div class="sri-badge" style="color:${stColor};background:${stBg};margin-top:3px">${st}</div></div>
         </div>`;
       }).join('');
-      if (prods.length > 8) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${prods.length-8} autre(s)</div>`;
+      if (prods.length > 8) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:var(--surface-2)">… et ${prods.length-8} autre(s)</div>`;
     }
   }
   // ... (les sections Mouvements et Demandes sont identiques au code original)
@@ -220,8 +220,8 @@ function runSearch(query) {
       totalCount += mvts.length;
       html += `<div class="search-section-header"><i class="ti ti-arrows-exchange" style="color:#4f46e5"></i>Mouvements <span class="count-badge">${mvts.length}</span></div>`;
       html += mvts.slice(0,6).map(m => {
-        const tc = m.type==='Entrée'?'#16a34a':'#dc2626';
-        const tb = m.type==='Entrée'?'#dcfce7':'#fee2e2';
+        const tc = m.type==='Entrée'?'var(--green-fg)':'var(--err-fg)';
+        const tb = m.type==='Entrée'?'var(--green-bg)':'var(--err-bg)';
         return `<div class="search-result-item" onclick="closeSearch();goto('${m.dept==='IT'?'mvt-it':'mvt-fin'}');setTimeout(()=>setInlineQuery('${escQ(m.produit_nom)}'),200)">
           <div class="sri-icon" style="background:${tb}"><i class="ti ti-arrows-exchange" style="color:${tc}"></i></div>
           <div class="sri-main"><div class="sri-title">${highlight(m.produit_nom,q)}${m.actif_id ? `<br><code class="actif-id" style="margin-top:2px;display:inline-block">${highlight(m.actif_id,q)}</code>` : ''}</div>
@@ -230,7 +230,7 @@ function runSearch(query) {
           <div class="sri-badge" style="color:${tc};background:${tb};margin-top:3px">${m.type}</div></div>
         </div>`;
       }).join('');
-      if (mvts.length > 6) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${mvts.length-6} autre(s)</div>`;
+      if (mvts.length > 6) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:var(--surface-2)">… et ${mvts.length-6} autre(s)</div>`;
     }
   }
   if (f==='all' || f==='demandes' || f==='it' || f==='fin') {
@@ -245,8 +245,8 @@ function runSearch(query) {
       totalCount += dems.length;
       html += `<div class="search-section-header"><i class="ti ti-clipboard-list" style="color:#f59e0b"></i>Demandes <span class="count-badge">${dems.length}</span></div>`;
       html += dems.slice(0,6).map(d => {
-        const sc = d.statut==='Validé'?'#16a34a':d.statut==='Refusé'?'#dc2626':'#d97706';
-        const sb = d.statut==='Validé'?'#dcfce7':d.statut==='Refusé'?'#fee2e2':'#fef3c7';
+        const sc = d.statut==='Validé'?'var(--green-fg)':d.statut==='Refusé'?'var(--err-fg)':'var(--warn-fg)';
+        const sb = d.statut==='Validé'?'var(--green-bg)':d.statut==='Refusé'?'var(--err-bg)':'var(--warn-bg)';
         return `<div class="search-result-item" onclick="closeSearch();goto('${d.dept==='IT'?'dem-it':'dem-fin'}');setTimeout(()=>setInlineQuery('${escQ(d.produit)}'),200)">
           <div class="sri-icon" style="background:${sb}"><i class="ti ti-clipboard-list" style="color:${sc}"></i></div>
           <div class="sri-main"><div class="sri-title">${highlight(d.produit,q)}</div>
@@ -254,7 +254,7 @@ function runSearch(query) {
           <div class="sri-meta"><div class="sri-badge" style="color:${sc};background:${sb}">${d.statut}</div></div>
         </div>`;
       }).join('');
-      if (dems.length > 6) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${dems.length-6} autre(s)</div>`;
+      if (dems.length > 6) html += `<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:var(--surface-2)">… et ${dems.length-6} autre(s)</div>`;
     }
   }
   // ─── Section Actifs individuels ──────────────────────────────
@@ -271,14 +271,14 @@ function runSearch(query) {
       html += `<div class="search-section-header"><i class="ti ti-devices" style="color:#6366f1"></i>Actifs individuels <span class="count-badge">${actifsList.length}</span></div>`;
       html += actifsList.slice(0,6).map(a => {
         const dc  = a.dept==='IT'?'#4f46e5':'#10b981';
-        const dbg = a.dept==='IT'?'#eef2ff':'#f0fdf4';
+        const dbg = a.dept==='IT'?'var(--indigo-bg)':'var(--green-bg)';
         const stColors = {
-          'En service':  { c:'#16a34a', bg:'#dcfce7' },
-          'En prêt':     { c:'#1d4ed8', bg:'#dbeafe' },
-          'Hors service':{ c:'#d97706', bg:'#fef3c7' },
-          'Réformé':     { c:'#94a3b8', bg:'#f1f5f9' },
+          'En service':  { c:'var(--green-fg)', bg:'var(--green-bg)' },
+          'En prêt':     { c:'var(--blue-fg)', bg:'var(--blue-bg)' },
+          'Hors service':{ c:'var(--warn-fg)', bg:'var(--warn-bg)' },
+          'Réformé':     { c:'var(--text3)', bg:'var(--kbd-bg)' },
         };
-        const { c:sc='#64748b', bg:sbg='#f1f5f9' } = stColors[a.statut] || {};
+        const { c:sc='var(--text3)', bg:sbg='var(--kbd-bg)' } = stColors[a.statut] || {};
         const tab = a.dept==='IT'?'actifs-it':'actifs-fin';
         return `<div class="search-result-item" onclick="closeSearch();goto('${tab}');setTimeout(()=>setInlineQuery('${escQ(a.id)}'),200)">
           <div class="sri-icon" style="background:${dbg}"><i class="ti ti-devices" style="color:${dc}"></i></div>
@@ -289,7 +289,7 @@ function runSearch(query) {
           <div class="sri-meta"><div class="sri-badge" style="color:${sc};background:${sbg}">${a.statut}</div></div>
         </div>`;
       }).join('');
-      if (actifsList.length>6) html+=`<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${actifsList.length-6} autre(s)</div>`;
+      if (actifsList.length>6) html+=`<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:var(--surface-2)">… et ${actifsList.length-6} autre(s)</div>`;
     }
   }
   // ─── Section Prêts ─────────────────────────────────────────
@@ -306,11 +306,11 @@ function runSearch(query) {
       html += `<div class="search-section-header"><i class="ti ti-transfer" style="color:#f59e0b"></i>Prêts <span class="count-badge">${pretsList.length}</span></div>`;
       html += pretsList.slice(0,6).map(p => {
         const stColors = {
-          'En cours':  { c:'#1d4ed8', bg:'#dbeafe' },
-          'En retard': { c:'#dc2626', bg:'#fee2e2' },
-          'Retourné':  { c:'#16a34a', bg:'#dcfce7' },
+          'En cours':  { c:'var(--blue-fg)', bg:'var(--blue-bg)' },
+          'En retard': { c:'var(--err-fg)', bg:'var(--err-bg)' },
+          'Retourné':  { c:'var(--green-fg)', bg:'var(--green-bg)' },
         };
-        const { c:sc='#64748b', bg:sbg='#f1f5f9' } = stColors[p.statut] || {};
+        const { c:sc='var(--text3)', bg:sbg='var(--kbd-bg)' } = stColors[p.statut] || {};
         const tab = p.dept==='IT'?'prets-it':'prets-fin';
         return `<div class="search-result-item" onclick="closeSearch();goto('${tab}');setTimeout(()=>setInlineQuery('${escQ(p.produit_id||'')}'),200)">
           <div class="sri-icon" style="background:${sbg}"><i class="ti ti-transfer" style="color:${sc}"></i></div>
@@ -324,7 +324,7 @@ function runSearch(query) {
           <div class="sri-meta"><div class="sri-badge" style="color:${sc};background:${sbg}">${p.statut}</div></div>
         </div>`;
       }).join('');
-      if (pretsList.length>6) html+=`<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:#fafbff">… et ${pretsList.length-6} autre(s)</div>`;
+      if (pretsList.length>6) html+=`<div style="padding:8px 18px;font-size:11px;color:var(--text3);background:var(--surface-2)">… et ${pretsList.length-6} autre(s)</div>`;
     }
   }
   if (!html) {
