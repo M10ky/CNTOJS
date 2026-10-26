@@ -207,7 +207,7 @@ window.submitMvt = async (typeStr) => {
 
   const prodId   = document.getElementById('f-prod')?.value;
   const qty      = parseInt(document.getElementById('f-qty')?.value) || 0;
-  const prixUnit = parseFloat(document.getElementById('f-prix-unit')?.value) || 0;
+  let prixUnit = parseFloat(document.getElementById('f-prix-unit')?.value) || 0;
   const user     = ST.profile?.name || 'Système';
   const userId   = ST.user?.id || null;
   const dest     = document.getElementById('f-dest')?.value || '';
@@ -227,6 +227,12 @@ window.submitMvt = async (typeStr) => {
 
   if (!isActif(prod)) {
     showToast(`"${prod.nom}" est désactivé — réactivez-le d'abord`, 'err'); return;
+  }
+
+  // Règle métier : « Déjà amorti » → prix forcé à 0 Ar pour intégration d’actifs prêtables entièrement amortis
+  if (typeStr === 'Entrée' && prod.is_amortissable === true &&
+      document.getElementById('f-deja-amorti')?.checked === true) {
+    prixUnit = 0;
   }
 
   // ─── Gestion des sorties amortissables ───
@@ -254,7 +260,10 @@ window.submitMvt = async (typeStr) => {
     if (prod.stock < qty) { showToast(`Stock insuffisant (${prod.stock} disponible)`, 'err'); return; }
   } else if (typeStr === 'Entrée') {
     if (qty <= 0) { showToast('Quantité invalide','err'); return; }
-    if (prixUnit <= 0) { showToast('Le prix unitaire est obligatoire pour une entrée','err'); return; }
+    if (prixUnit < 0) { showToast('Le prix unitaire ne peut pas être négatif','err'); return; }
+    if (prod.is_amortissable !== true && prixUnit <= 0) {
+      showToast('Le prix unitaire doit être supérieur à 0 pour une entrée non amortissable','err'); return;
+    }
   }
 
   const effectiveQty = selectedActifIds.length > 0 ? selectedActifIds.length : qty;
@@ -961,7 +970,18 @@ function renderModal() {
         <div class="form-row">
           <label class="form-lbl">Prix unit. (MGA) <span class="req">*</span></label>
           <input id="f-prix-unit" type="number" min="0" placeholder="0"
-            oninput="this.dataset.userEdited='1'"></div>
+            oninput="this.dataset.userEdited='1'">
+          <div id="f-deja-amorti-wrap" style="display:none;margin-top:7px">
+            <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:11.5px;font-weight:600;color:var(--text2)">
+              <input type="checkbox" id="f-deja-amorti" onchange="onDejaAmortiToggle()"
+                style="width:auto;accent-color:var(--teal);cursor:pointer">
+              <span>Actif déjà amorti</span>
+            </label>
+            <div id="f-deja-amorti-hint" style="display:none;margin-top:4px;font-size:10.5px;color:var(--text3)">
+              Prix fixé à 0 Ar — actif déjà entièrement amorti
+            </div>
+          </div>
+        </div>
       </div>` : `
       <div id="f-qty-wrap" class="form-row">
         <label class="form-lbl">Quantité <span class="req">*</span></label>
@@ -1152,6 +1172,53 @@ window.openMvt     = (t,d,p) => { ST.modal={type:'mvt',mvtType:t,dept:d,prodId:p
 window.openAdd     = d       => { ST.modal={type:'add',dept:d}; renderModal(); };
 window.openDemande = d       => { ST.modal={type:'dem',dept:d}; renderModal(); };
 window.closeModal  = ()      => { ST.modal=null; document.getElementById('modal-el')?.remove(); };
+// Règle métier : « Déjà amorti » → prix forcé à 0 Ar pour intégration d’actifs prêtables entièrement amortis
+function syncDejaAmortiUI(prod) {
+  const wrap = document.getElementById('f-deja-amorti-wrap');
+  const chk  = document.getElementById('f-deja-amorti');
+  const prix = document.getElementById('f-prix-unit');
+  if (!wrap || !chk || !prix) return;
+  const eligible = ST.modal?.mvtType === 'entree' && prod?.is_amortissable === true;
+  if (!eligible) {
+    if (chk.checked) { chk.checked = false; onDejaAmortiToggle(); }
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+  if (chk.checked) onDejaAmortiToggle();
+}
+
+window.onDejaAmortiToggle = () => {
+  // Règle métier : « Déjà amorti » → prix forcé à 0 Ar pour intégration d’actifs prêtables entièrement amortis
+  const chk  = document.getElementById('f-deja-amorti');
+  const prix = document.getElementById('f-prix-unit');
+  const hint = document.getElementById('f-deja-amorti-hint');
+  if (!chk || !prix) return;
+  if (chk.checked) {
+    if (prix.dataset.dejaAmorti !== '1' && prix.dataset.userEdited) {
+      prix.dataset.prixAvant = prix.value;
+    }
+    prix.value = '0';
+    prix.readOnly = true;
+    prix.classList.add('field-readonly');
+    prix.dataset.dejaAmorti = '1';
+    if (hint) hint.style.display = '';
+  } else {
+    prix.readOnly = false;
+    prix.classList.remove('field-readonly');
+    delete prix.dataset.dejaAmorti;
+    if (hint) hint.style.display = 'none';
+    if (prix.dataset.prixAvant != null) {
+      prix.value = prix.dataset.prixAvant;
+      delete prix.dataset.prixAvant;
+    } else if (!prix.dataset.userEdited) {
+      const prod = ST.produits.find(x => x.id === document.getElementById('f-prod')?.value);
+      const cump = prod ? getCUMPProduit(prod.id) : 0;
+      if (prod) prix.value = cump > 0 ? Math.round(cump) : (prod.prix || 0);
+    }
+  }
+};
+
 // ─── Étape D+ : mise à jour dynamique du formulaire d'entrée ─
 // Appelé sur onchange du produit et oninput de la quantité.
 window.onMvtFieldChange = async () => {
@@ -1162,6 +1229,16 @@ window.onMvtFieldChange = async () => {
   const prod    = ST.produits.find(x => x.id === prodId);
   const iE      = ST.modal?.mvtType === 'entree';
   const prixInp = document.getElementById('f-prix-unit');
+
+  // Changement de produit : on repart d'un prix propre pour le nouveau produit.
+  if (prixInp && prixInp.dataset.prodId !== (prodId || '')) {
+    delete prixInp.dataset.userEdited;
+    delete prixInp.dataset.prixAvant;
+    delete prixInp.dataset.dejaAmorti;
+    prixInp.readOnly = false;
+    prixInp.classList.remove('field-readonly');
+    prixInp.dataset.prodId = prodId || '';
+  }
 
   // Prix unitaire pré-rempli (modifiable pour entrée, readonly pour sortie)
  // APRÈS
@@ -1176,6 +1253,7 @@ window.onMvtFieldChange = async () => {
     const cump = getCUMPProduit(prod.id);
     prixInp.value = cump > 0 ? Math.round(cump) : (prod.prix || 0);
   }
+  syncDejaAmortiUI(prod);
 
   // Section numéros de série : uniquement pour les entrées amortissables
   // FIX : l'ancien `if (!serlSec || !iE) return;` sortait de la fonction AVANT

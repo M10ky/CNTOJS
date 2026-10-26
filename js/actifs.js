@@ -151,10 +151,9 @@ window.createActifUnits = async (prod, qty, mvtId, emplacement, manualSerials = 
         // même produit peut être réceptionné à des prix différents au fil du temps ;
         // chaque actif individuel doit conserver SON propre prix d'acquisition. Le
         // repli sur prod.valeur_achat est supprimé (c'était la source du bug : ce
-        // champ catalogue est rarement configuré et valait souvent 0). submitMvt()
-        // bloque désormais toute entrée sans prix pour un produit amortissable, donc
-        // ce cas ne devrait plus survenir en usage normal ; 0 reste un repli défensif.
-        valeur_achat:        (prixUnit !== null && prixUnit > 0) ? prixUnit : 0,
+        // champ catalogue est rarement configuré et valait souvent 0). 0 est une
+        // valeur métier valide pour un actif déjà amorti.
+        valeur_achat:        (prixUnit !== null && prixUnit !== undefined) ? Math.max(0, prixUnit) : 0,
         // FIX (corrections finales — pt.3) : date_achat = date réelle de CETTE entrée
         // (même valeur que date_entree, tronquée à la date), et non plus la date_achat
         // générique du produit catalogue. Chaque actif amortit donc à partir de sa
