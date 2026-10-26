@@ -10,6 +10,18 @@ function getProduitsNonAmort() {
 function getProduitsVisibles() {
   return ST.produits.filter(p => (canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance'));
 }
+function fMvtScope() {
+  return [
+    ...(canSeeIT() ? fMvtIT() : []),
+    ...(canSeeFin() ? fMvtFin() : []),
+  ];
+}
+function fDemScope() {
+  return [
+    ...(canSeeIT() ? fDemIT() : []),
+    ...(canSeeFin() ? fDemFin() : []),
+  ];
+}
 
 /** Validé / (Validé + Refusé) — "En attente" exclu du calcul, conformément à la confirmation. */
 function tauxValidationGlobal(dem) {
@@ -44,7 +56,8 @@ function topProduitsCouteux(n = 10) {
 
 function repartitionActifsStatut() {
   const statuts = ['En service', 'En prêt', 'Hors service', 'Sorti', 'Réformé'];
-  const visibles = (ST.actifs || []).filter(a => (canManIT() && a.dept === 'IT') || (canManFin() && a.dept === 'Finance'));
+  // Lecture : les rôles Lecteur doivent aussi voir la répartition.
+  const visibles = (ST.actifs || []).filter(a => (canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance'));
   return statuts.map(s => ({ statut: s, n: visibles.filter(a => a.statut === s).length }));
 }
 
@@ -141,7 +154,7 @@ function getTauxRotationStock() {
       .filter(p => (canSeeIT() && p.dept === 'IT') || (canSeeFin() && p.dept === 'Finance'))
       .map(p => p.id)
   );
-  const sortiesVal = [...fMvtIT(), ...fMvtFin()]
+  const sortiesVal = fMvtScope()
     .filter(m => m.type === 'Sortie' && nonAmortIds.has(m.produit_id))
     .reduce((s, m) => s + (m.valeur || 0), 0);
   const stockVal = getProduitsVisibles().filter(p => !p.is_amortissable)
@@ -227,7 +240,7 @@ function renderDashboard() {
   if (canManFin()) kpis.push({lbl:'Alertes Finance',val:alFin,s:alFin>0?'⚠ à traiter':'✓ Niveaux OK',c:alFin>0?'#ef4444':'#22c55e'});
   if (canManIT())  kpis.push({lbl:'Demandes IT en attente',val:attenteIT(),s:'à traiter',c:'#f59e0b'});
   if (canManFin()) kpis.push({lbl:'Demandes Finance en attente',val:attenteFin(),s:'à traiter',c:'#f59e0b'});
-  const allMvt=[...fMvtIT(),...fMvtFin()].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,10);
+  const allMvt=fMvtScope().sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,10);
   const mvtRows=allMvt.map(m=>`<tr>
     <td>${fmtDTSplit(m.created_at||m.date)}</td>
     <td>${deptTag(m.dept)}</td>
@@ -535,12 +548,20 @@ function weekEmptyRow(cols, msg) {
   return `<tr><td colspan="${cols}" style="text-align:center;color:var(--text3);padding:14px">${msg}</td></tr>`;
 }
 
+function weekMoreNote(total, shown = 5) {
+  return total > shown
+    ? `<div style="padding:8px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">… et ${total - shown} autre(s) — voir l'export CSV.</div>`
+    : '';
+}
+
 function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
   const isIT = dept === 'IT';
   const color = isIT ? '#4f46e5' : '#10b981';
   const canSeeAssets = isIT ? (canManIT() || isLecteur()) : (canManFin() || isLecteur());
   const deptLbl = isIT ? 'IT' : 'Finance';
 
+  // UX : KPI hebdo limités aux flux ; les volumes actifs/prêts restent
+  // dans les résumés courts plus bas et dans l'export CSV.
   const kpis = [
     { lbl: 'Mouvements',    val: stats.nbMvt,       s: variationLabel(stats.nbMvt, stats.nbMvtPrev), c: '#6366f1' },
     { lbl: 'Entrées (qté)', val: fmt(stats.qtyIn),  s: `${stats.entrees.length} mouvement(s)`,       c: '#16a34a' },
@@ -550,15 +571,6 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
     kpis.push({ lbl: 'Valeur entrées', val: fmt(stats.valIn) + ' MGA', s: variationLabel(stats.valIn, stats.prevEntrees.reduce((s, m) => s + (m.valeur || 0), 0), true), c: '#16a34a' });
     kpis.push({ lbl: 'Valeur sorties', val: fmt(stats.valOut) + ' MGA', s: variationLabel(stats.valOut, stats.prevSorties.reduce((s, m) => s + (m.valeur || 0), 0), true), c: '#dc2626' });
     kpis.push({ lbl: 'Solde net',      val: fmt(stats.net) + ' MGA',    s: 'entrées − sorties', c: stats.net >= 0 ? '#16a34a' : '#dc2626' });
-  }
-  kpis.push({ lbl: 'Produits touchés', val: stats.produitsTouches, s: 'références distinctes', c: '#0ea5e9' });
-  kpis.push({ lbl: 'Demandes créées',  val: stats.demandes.total,  s: `${stats.demandes.validees} validée(s) · ${stats.demandes.refusees} refusée(s) · ${stats.demandes.attente} en attente`, c: '#f59e0b' });
-  if (canSeeAssets) {
-    kpis.push({ lbl: 'Actifs créés',     val: stats.actifsCrees.length, s: 'entrées amortissables', c: '#7c3aed' });
-    kpis.push({ lbl: 'Actifs sortis',    val: stats.actifsSortis.length, s: 'sorties individuelles', c: '#dc2626' });
-    kpis.push({ lbl: 'Prêts démarrés',   val: stats.pretsDemarres.length, s: 'sur la semaine', c: '#3b82f6' });
-    kpis.push({ lbl: 'Prêts rendus',     val: stats.pretsRendus.length,   s: 'sur la semaine', c: '#10b981' });
-    kpis.push({ lbl: 'Prêts en retard',  val: stats.pretsRetard.length,   s: 'stock actuel', c: stats.pretsRetard.length ? '#ef4444' : '#22c55e' });
   }
 
   const dayCols = showP ? 6 : 3;
@@ -580,16 +592,10 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
     </tr>`;
   }).join('');
 
-  const topRows = (list, empty) => list.map((p, i) => `<tr>
-    <td style="font-weight:700;color:var(--text3)">#${i + 1}</td>
-    <td style="font-weight:600">${p.nom}</td>
-    <td style="font-weight:700">${fmt(p.qty)}</td>
-    ${showP ? `<td style="font-family:var(--mono);font-size:12px">${fmt(p.valeur)} MGA</td>` : ''}
-  </tr>`).join('') || weekEmptyRow(showP ? 4 : 3, empty);
-
+  // UX : résumés courts (5 lignes max) ; le détail complet reste dans le CSV.
   const demRows = [...stats.dms]
     .sort((a, b) => new Date(b.created_at || b.date) - new Date(a.created_at || a.date))
-    .slice(0, 10)
+    .slice(0, 5)
     .map(d => `<tr>
       <td>${fmtDTSplit(d.created_at || d.date)}</td>
       <td style="font-weight:500">${d.demandeur || '—'}</td>
@@ -598,14 +604,14 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
       <td>${statBadge(d.statut)}</td>
     </tr>`).join('') || weekEmptyRow(5, 'Aucune demande créée cette semaine');
 
-  const actifCreesRows = stats.actifsCrees.map(a => `<tr>
+  const actifCreesRows = stats.actifsCrees.slice(0, 5).map(a => `<tr>
     <td>${fmtDTSplit(a.date_entree)}</td>
     <td><code class="actif-id">${a.id}</code></td>
     <td style="font-weight:500">${a.produit_nom || '—'}</td>
     <td>${a.statut || '—'}</td>
   </tr>`).join('') || weekEmptyRow(4, 'Aucun actif créé cette semaine');
 
-  const actifSortisRows = stats.actifsSortis.map(a => `<tr>
+  const actifSortisRows = stats.actifsSortis.slice(0, 5).map(a => `<tr>
     <td>${fmtDTSplit(a.sortie.created_at || a.sortie.date)}</td>
     <td><code class="actif-id">${a.id}</code></td>
     <td style="font-weight:500">${a.produit_nom || '—'}</td>
@@ -619,9 +625,9 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
     <td>${p.emprunteur || '—'}</td>
     <td>${pretStatutBadge(p.statut)}</td>
   </tr>`;
-  const pretsDemarresRows = stats.pretsDemarres.map(p => pretLigne({ ...p, _date: p.date_debut || p.created_at })).join('')
+  const pretsDemarresRows = stats.pretsDemarres.slice(0, 5).map(p => pretLigne({ ...p, _date: p.date_debut || p.created_at })).join('')
     || weekEmptyRow(5, 'Aucun prêt démarré cette semaine');
-  const pretsRendusRows = stats.pretsRendus.map(p => pretLigne({ ...p, _date: p.date_retour_reelle })).join('')
+  const pretsRendusRows = stats.pretsRendus.slice(0, 5).map(p => pretLigne({ ...p, _date: p.date_retour_reelle })).join('')
     || weekEmptyRow(5, 'Aucun prêt rendu cette semaine');
 
   const emptyBanner = stats.hasData ? '' : `<div class="info-banner" style="background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-fg)">
@@ -651,30 +657,13 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
       </div>
     </div>
 
-    <div class="charts-grid">
-      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
-        <div class="card-hd"><span class="card-ttl"><i class="ti ti-trending-up" style="color:#dc2626"></i>Top 5 produits sortis</span></div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>#</th><th>Produit</th><th>Qté</th>${showP ? '<th>Valeur</th>' : ''}</tr></thead>
-          <tbody>${topRows(stats.topSorties, 'Aucune sortie cette semaine')}</tbody>
-        </table></div>
-      </div>
-      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
-        <div class="card-hd"><span class="card-ttl"><i class="ti ti-trending-down" style="color:#16a34a"></i>Top 5 produits entrés</span></div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>#</th><th>Produit</th><th>Qté</th>${showP ? '<th>Valeur</th>' : ''}</tr></thead>
-          <tbody>${topRows(stats.topEntrees, 'Aucune entrée cette semaine')}</tbody>
-        </table></div>
-      </div>
-    </div>
-
     <div class="card" style="margin-bottom:14px">
       <div class="card-hd"><span class="card-ttl"><i class="ti ti-clipboard-list" style="color:#f59e0b"></i>Demandes de la semaine (${stats.demandes.total})</span></div>
       <div style="overflow-x:auto"><table>
         <thead><tr><th>Date</th><th>Demandeur</th><th>Produit</th><th>Qté</th><th>Statut</th></tr></thead>
         <tbody>${demRows}</tbody>
       </table></div>
-      ${stats.dms.length > 10 ? `<div style="padding:8px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">… et ${stats.dms.length - 10} autre(s) demande(s) — voir l'export CSV.</div>` : ''}
+      ${weekMoreNote(stats.dms.length)}
     </div>
 
     ${canSeeAssets ? `
@@ -685,11 +674,13 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
           <thead><tr><th>Date</th><th>N° actif</th><th>Produit</th><th>Statut</th></tr></thead>
           <tbody>${actifCreesRows}</tbody>
         </table></div>
+        ${weekMoreNote(stats.actifsCrees.length)}
         <div class="card-hd" style="border-top:1px solid var(--border)"><span class="card-ttl"><i class="ti ti-device-desktop-off" style="color:#dc2626"></i>Actifs sortis (${stats.actifsSortis.length})</span></div>
         <div style="overflow-x:auto"><table>
           <thead><tr><th>Date sortie</th><th>N° actif</th><th>Produit</th><th>Statut</th></tr></thead>
           <tbody>${actifSortisRows}</tbody>
         </table></div>
+        ${weekMoreNote(stats.actifsSortis.length)}
       </div>
       <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
         <div class="card-hd"><span class="card-ttl"><i class="ti ti-transfer" style="color:#3b82f6"></i>Prêts démarrés (${stats.pretsDemarres.length})</span></div>
@@ -697,11 +688,13 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
           <thead><tr><th>Date début</th><th>Actif</th><th>Produit</th><th>Emprunteur</th><th>Statut</th></tr></thead>
           <tbody>${pretsDemarresRows}</tbody>
         </table></div>
+        ${weekMoreNote(stats.pretsDemarres.length)}
         <div class="card-hd" style="border-top:1px solid var(--border)"><span class="card-ttl"><i class="ti ti-transfer-in" style="color:#10b981"></i>Prêts rendus (${stats.pretsRendus.length})</span></div>
         <div style="overflow-x:auto"><table>
           <thead><tr><th>Date retour</th><th>Actif</th><th>Produit</th><th>Emprunteur</th><th>Statut</th></tr></thead>
           <tbody>${pretsRendusRows}</tbody>
         </table></div>
+        ${weekMoreNote(stats.pretsRendus.length)}
       </div>
     </div>` : ''}
   `;
@@ -757,61 +750,86 @@ function renderRapportHebdoSection(weekStart, weekEnd, entry) {
   `;
 }
 
+// UX : page Rapports découpée en sections pour réduire la charge cognitive
+// Navigation par onglets : une seule section visible à la fois.
+const RAPPORTS_TABS = [
+  { id: 'synthese', lbl: 'Synthèse',     icon: 'ti-layout-dashboard' },
+  { id: 'hebdo',    lbl: 'Hebdomadaire', icon: 'ti-calendar-week' },
+  { id: 'periode',  lbl: 'Période',      icon: 'ti-calendar-stats' },
+  { id: 'stock',    lbl: 'Stock',        icon: 'ti-box' },
+  { id: 'actifs',   lbl: 'Actifs',       icon: 'ti-devices' },
+];
+const RAPPORTS_TAB_IDS = RAPPORTS_TABS.map(t => t.id);
+
+function rapportsTabCourant() {
+  return RAPPORTS_TAB_IDS.includes(ST.rapportsTab) ? ST.rapportsTab : 'synthese';
+}
+
+window.setRapportsTab = (id) => {
+  ST.rapportsTab = RAPPORTS_TAB_IDS.includes(id) ? id : 'synthese';
+  render();
+};
+
+function canSeeActifsRapports() {
+  return (canSeeIT() && (canManIT() || isLecteur())) ||
+         (canSeeFin() && (canManFin() || isLecteur()));
+}
+
 // ── RAPPORTS — TABLEAU DE BORD DÉCISIONNEL (Point 3) ──
 function renderRapports() {
-  const weekStart = startOfWeekMonday(ST.weekRef || new Date());
-  const weekEnd   = endOfWeekSunday(weekStart);
-  const weekEntry = ensureWeekFluxData(weekStart, weekEnd);
-  const weeklySection = renderRapportHebdoSection(weekStart, weekEnd, weekEntry);
+  // UX : navigation par onglets — une seule section visible à la fois.
+  const canSeeActifs = canSeeActifsRapports();
+  const tabs = RAPPORTS_TABS.filter(t => t.id !== 'actifs' || canSeeActifs);
+  let tab = rapportsTabCourant();
+  if (!tabs.some(t => t.id === tab)) tab = 'synthese';
+  ST.rapportsTab = tab;
+  const showP = canSeePrix();
 
   const prodsVisibles = getProduitsVisibles();
   const vIT  = ST.produits.filter(p => p.dept === 'IT').reduce((s, p) => s + getValeurStockActuel(p.id), 0);
   const vFin = ST.produits.filter(p => p.dept === 'Finance').reduce((s, p) => s + getValeurStockActuel(p.id), 0);
+  const vncIT  = (ST.actifs || []).filter(a => a.dept === 'IT'      && (a.statut === 'En service' || a.statut === 'En prêt')).reduce((s, a) => s + (calcVNC(a) || 0), 0);
+  const vncFin = (ST.actifs || []).filter(a => a.dept === 'Finance' && (a.statut === 'En service' || a.statut === 'En prêt')).reduce((s, a) => s + (calcVNC(a) || 0), 0);
+  const totIT  = vIT + vncIT;
+  const totFin = vFin + vncFin;
 
-  const mvtPeriode  = [...fMvtIT(), ...fMvtFin()];
+  const mvtPeriode  = fMvtScope();
   const entreesP    = mvtPeriode.filter(m => m.type === 'Entrée');
   const sortiesP    = mvtPeriode.filter(m => m.type === 'Sortie');
   const valEntreesP = entreesP.reduce((s, m) => s + (m.valeur || 0), 0);
   const valSortiesP = sortiesP.reduce((s, m) => s + (m.valeur || 0), 0);
+  const qtyEntreesP = entreesP.reduce((s, m) => s + (m.qty || 0), 0);
+  const qtySortiesP = sortiesP.reduce((s, m) => s + (m.qty || 0), 0);
+  const soldeNet    = showP ? valEntreesP - valSortiesP : qtyEntreesP - qtySortiesP;
 
-  const demVisibles  = [...fDemIT(), ...fDemFin()];
+  const demVisibles  = fDemScope();
   const tauxValid    = tauxValidationGlobal(demVisibles);
   const nbAttente    = demVisibles.filter(d => d.statut === 'En attente').length;
 
-  const nbProduits   = prodsVisibles.length;
-  const nbUnites     = prodsVisibles.reduce((s, p) => s + (p.stock || 0), 0);
-  const nbCritiques  = alertsIT().length + alertsFin().length;
-  const nbAmort      = prodsVisibles.filter(p => p.is_amortissable).length;
+  const nbProduits    = prodsVisibles.length;
+  const nbUnites      = prodsVisibles.reduce((s, p) => s + (p.stock || 0), 0);
+  const critiques     = prodsVisibles
+    .filter(p => p.actif !== false && (p.stock <= p.seuil || p.stock === 0))
+    .sort((a, b) => (a.stock || 0) - (b.stock || 0));
+  const nbCritiques   = critiques.length;
+  const nbRuptures    = critiques.filter(p => p.stock === 0).length;
+  const nbAmort       = prodsVisibles.filter(p => p.is_amortissable).length;
+  const nbActifsProd  = prodsVisibles.filter(p => isActif(p)).length;
+  const nbInactifsProd = nbProduits - nbActifsProd;
 
-  // ── KPIs ──────────────────────────────────────────────────
-  const kpis = [
-    { lbl: 'Valeur Stock IT',            val: fmt(vIT) + ' MGA',        s: 'Non-amortissables (CUMP)', c: '#4f46e5' },
-    { lbl: 'Valeur Stock Finance',       val: fmt(vFin) + ' MGA',       s: 'Non-amortissables (CUMP)', c: '#10b981' },
-    { lbl: 'Produits (total)',           val: nbProduits,               s: `${nbAmort} amortissable(s)`, c: '#64748b' },
-    { lbl: 'Unités en stock',            val: fmt(nbUnites),            s: 'toutes références',        c: '#0ea5e9' },
-    { lbl: 'Mouvements (période)',       val: mvtPeriode.length,        s: `${entreesP.length} entrée(s) · ${sortiesP.length} sortie(s)`, c: '#6366f1' },
-    { lbl: 'Valeur Entrées (période)',   val: fmt(valEntreesP) + ' MGA',s: 'coût d\'acquisition',      c: '#16a34a' },
-    { lbl: 'Valeur Sorties (période)',   val: fmt(valSortiesP) + ' MGA',s: 'valorisées au CUMP',       c: '#dc2626' },
-    { lbl: 'Produits critiques',         val: nbCritiques,              s: 'sous seuil ou rupture',    c: '#ef4444' },
-    { lbl: 'Produits amortissables',     val: nbAmort,                  s: 'suivi individuel actif',   c: '#7c3aed' },
-    { lbl: 'Demandes en attente',        val: nbAttente,                s: 'à traiter',                c: '#f59e0b' },
-    { lbl: 'Taux de validation',         val: tauxValid + '%',          s: 'Validé / (Validé+Refusé)', c: '#f59e0b' },
-  ];
-
-  // ── Analyse détaillée ───────────────────────────────────────
-  const valMoyCat   = valeurMoyenneParCategorie();
-  const coutMoySortie= coutMoyenSorties(sortiesP);
+  const valMoyCat    = valeurMoyenneParCategorie();
+  const coutMoySortie = coutMoyenSorties(sortiesP);
   const sansMvt      = produitsSansMouvement90j();
   const dernieres    = [...mvtPeriode].sort((a,b)=>new Date(b.created_at||b.date)-new Date(a.created_at||a.date)).slice(0,8);
-  const nbActifsProd = prodsVisibles.filter(p=>isActif(p)).length;
-  const nbInactifsProd = nbProduits - nbActifsProd;
+  const periodeLbl   = `${fmtDate(ST.dateFrom)} → ${fmtDate(ST.dateTo)}`;
+
+  const moreRowsNote = (total, shown) => total > shown ? `<div style="padding:8px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">… et ${total - shown} autre(s) non affiché(s).</div>` : '';
 
   const catMoyRows = valMoyCat.slice(0,8).map(c => `<tr>
     <td style="font-weight:600">${c.cat}</td>
     <td style="color:var(--text3)">${c.n}</td>
-    <td style="font-weight:700">${fmt(c.total)} MGA</td>
-    <td>${fmt(Math.round(c.moyenne))} MGA</td>
-  </tr>`).join('') || `<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:16px">Aucune donnée</td></tr>`;
+    ${showP ? `<td>${fmt(Math.round(c.moyenne))} MGA</td>` : ''}
+  </tr>`).join('') || `<tr><td colspan="${showP ? 3 : 2}" style="text-align:center;color:var(--text3);padding:16px">Aucune donnée</td></tr>`;
 
   const sansMvtRows = sansMvt.slice(0,10).map(p => `<tr>
     <td>${deptTag(p.dept)}</td>
@@ -826,58 +844,171 @@ function renderRapports() {
     <td>${typeBadge(m.type)}</td>
     <td style="font-weight:500">${m.produit_nom}</td>
     <td style="font-weight:700">${m.qty}</td>
-    <td style="font-weight:700">${fmt(m.valeur)} MGA</td>
-  </tr>`).join('') || `<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Aucun mouvement sur la période</td></tr>`;
+    ${showP ? `<td style="font-weight:700">${fmt(m.valeur)} MGA</td>` : ''}
+  </tr>`).join('') || `<tr><td colspan="${showP ? 6 : 5}" style="text-align:center;color:var(--text3);padding:16px">Aucun mouvement sur la période</td></tr>`;
 
-  return `<p class="page-title">Rapports & Statistiques</p>
-    <p class="page-sub">Tableau de bord décisionnel — période sélectionnée</p>
+  const critRows = critiques.slice(0,8).map(p => `<tr>
+    <td>${deptTag(p.dept)}</td>
+    <td style="font-weight:600">${p.nom}</td>
+    <td style="font-weight:700;color:${p.stock === 0 ? '#dc2626' : '#f59e0b'}">${p.stock}</td>
+    <td style="color:var(--text3)">${p.seuil ?? '—'}</td>
+  </tr>`).join('');
 
-    ${weeklySection}
+  const actifsVisibles = (ST.actifs || []).filter(a =>
+    (canSeeIT() && a.dept === 'IT') || (canSeeFin() && a.dept === 'Finance')
+  );
+  const actifsCreesPeriode = actifsVisibles.filter(a => a.date_entree && inRange(a.date_entree)).length;
+  const actifsSortisPeriode = new Set(
+    (ST.mouvements || [])
+      .filter(m => m.actif_id && m.type === STATUS_MVT.SORTIE && (m.created_at || m.date) &&
+        inRange(m.created_at || m.date) &&
+        ((canSeeIT() && m.dept === 'IT') || (canSeeFin() && m.dept === 'Finance')))
+      .map(m => m.actif_id)
+  ).size;
 
+  // ── Synthèse : pilotage rapide, sans tableaux longs ─────────
+  const kpis = [];
+  if (showP) {
+    if (canSeeIT())  kpis.push({ lbl: 'Valeur stock IT',      val: fmt(totIT) + ' MGA',  s: 'CUMP + VNC actifs', c: '#4f46e5' });
+    if (canSeeFin()) kpis.push({ lbl: 'Valeur stock Finance', val: fmt(totFin) + ' MGA', s: 'CUMP + VNC actifs', c: '#10b981' });
+  }
+  kpis.push({ lbl: 'Mouvements (période)', val: mvtPeriode.length, s: `${fmt(qtyEntreesP)} entrées · ${fmt(qtySortiesP)} sorties`, c: '#6366f1' });
+  kpis.push({ lbl: 'Produits critiques',   val: nbCritiques,       s: `${nbRuptures} rupture(s)`, c: '#ef4444' });
+  kpis.push({ lbl: 'Demandes en attente',  val: nbAttente,         s: 'à traiter', c: '#f59e0b' });
+  kpis.push({ lbl: 'Taux de validation',   val: tauxValid + '%',   s: 'Validé / (Validé + Refusé)', c: '#0ea5e9' });
+  if (showP) {
+    kpis.push({ lbl: 'Valeur entrées (période)', val: fmt(valEntreesP) + ' MGA', s: 'coût d\'acquisition', c: '#16a34a' });
+    kpis.push({ lbl: 'Valeur sorties (période)', val: fmt(valSortiesP) + ' MGA', s: 'valorisées au CUMP',  c: '#dc2626' });
+  }
+
+  const sectionSynthese = `
     <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s||''}</div></div>`).join('')}</div>
-
-    <div class="charts-grid">
-      <div class="chart-card"><div class="chart-ttl">Valeur du stock par catégorie (non-amortissables)</div><div class="bar-chart-wrap"><canvas id="chart-rap-cat-valeur"></canvas></div></div>
-      <div class="chart-card"><div class="chart-ttl">Entrées vs Sorties — 6 derniers mois</div><div class="bar-chart-wrap"><canvas id="chart-rap-evol-mensuel"></canvas></div></div>
-    </div>
-    <div class="charts-grid">
-      <div class="chart-card"><div class="chart-ttl">Top 10 produits les plus distribués (période)</div><div class="bar-chart-wrap"><canvas id="chart-rap-top-distrib"></canvas></div></div>
-      <div class="chart-card"><div class="chart-ttl">Top 10 produits les plus coûteux</div><div class="bar-chart-wrap"><canvas id="chart-rap-top-couteux"></canvas></div></div>
-    </div>
-    <div class="charts-grid">
-      <div class="chart-card"><div class="chart-ttl">Actifs amortissables par statut</div><div class="bar-chart-wrap"><canvas id="chart-rap-actifs-statut"></canvas></div></div>
-      <div class="chart-card"><div class="chart-ttl">Évolution de la valeur du stock (6 mois)</div><div class="bar-chart-wrap"><canvas id="chart-rap-evol-valeur"></canvas></div></div>
-    </div>
-
     <div class="card">
-      <div class="card-hd"><span class="card-ttl"><i class="ti ti-chart-bar" style="color:var(--teal)"></i>Analyse détaillée</span></div>
-      <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;border-bottom:1px solid var(--border)">
-        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Coût moyen des sorties</div><div style="font-size:18px;font-weight:800;margin-top:4px">${fmt(Math.round(coutMoySortie))} MGA</div></div>
-        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Produits actifs / inactifs</div><div style="font-size:18px;font-weight:800;margin-top:4px">${nbActifsProd} / ${nbInactifsProd}</div></div>
-        <div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:700">Produits sans mouvement &gt;90j</div><div style="font-size:18px;font-weight:800;margin-top:4px;color:${sansMvt.length?'#f59e0b':'#16a34a'}">${sansMvt.length}</div></div>
+      <div class="card-hd">
+        <span class="card-ttl"><i class="ti ti-activity" style="color:var(--teal)"></i>Pulse — ${showP ? 'solde net valorisé' : 'solde net des quantités'}</span>
+        <span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${periodeLbl}</span>
       </div>
-      <div style="padding:16px;border-bottom:1px solid var(--border)">
-        <div class="chart-ttl" style="margin-bottom:8px">Valeur moyenne par catégorie</div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>Catégorie</th><th>Nb produits</th><th>Valeur totale</th><th>Valeur moyenne</th></tr></thead>
-          <tbody>${catMoyRows}</tbody>
-        </table></div>
-      </div>
-      <div style="padding:16px;border-bottom:1px solid var(--border)">
-        <div class="chart-ttl" style="margin-bottom:8px">Produits sans mouvement depuis plus de 90 jours</div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>Dépt</th><th>Produit</th><th>Catégorie</th><th>Stock</th></tr></thead>
-          <tbody>${sansMvtRows}</tbody>
-        </table></div>
-      </div>
-      <div style="padding:16px">
-        <div class="chart-ttl" style="margin-bottom:8px">Dernières entrées / sorties (période)</div>
-        <div style="overflow-x:auto"><table>
-          <thead><tr><th>Date & Heure</th><th>Dépt</th><th>Type</th><th>Produit</th><th>Qté</th><th>Valeur</th></tr></thead>
-          <tbody>${dernieresRows}</tbody>
-        </table></div>
+      <div style="padding:16px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <div class="kpi-val" style="color:${soldeNet >= 0 ? '#16a34a' : '#dc2626'}">${showP ? fmt(soldeNet) + ' MGA' : fmt(soldeNet)}</div>
+        <div class="kpi-s" style="margin-top:0">${showP ? 'entrées − sorties valorisées sur la période' : 'entrées − sorties en unités sur la période'}</div>
       </div>
     </div>`;
+
+  // ── Hebdomadaire : chargé uniquement quand l'onglet est actif ─
+  let sectionHebdo = '';
+  if (tab === 'hebdo') {
+    const weekStart = startOfWeekMonday(ST.weekRef || new Date());
+    const weekEnd   = endOfWeekSunday(weekStart);
+    const weekEntry = ensureWeekFluxData(weekStart, weekEnd);
+    sectionHebdo = renderRapportHebdoSection(weekStart, weekEnd, weekEntry);
+  }
+
+  // ── Période : 4 charts maximum + un seul tableau ────────────
+  const sectionPeriode = `
+    <div class="info-banner" style="margin-bottom:14px">
+      <i class="ti ti-filter" style="color:#0ea5e9"></i>
+      <div>Période analysée : <strong>${periodeLbl}</strong> — filtre de la barre supérieure.</div>
+    </div>
+    ${mvtPeriode.length ? '' : `<div class="info-banner" style="background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-fg)">
+      <i class="ti ti-calendar-off" style="color:#f59e0b"></i>
+      <div>Aucun mouvement enregistré sur la période sélectionnée.</div>
+    </div>`}
+    <div class="charts-grid">
+      <div class="chart-card"><div class="chart-ttl">Entrées vs Sorties — 6 derniers mois</div><div class="bar-chart-wrap"><canvas id="chart-rap-evol-mensuel"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Valeur du stock par catégorie (non-amortissables)</div><div class="bar-chart-wrap"><canvas id="chart-rap-cat-valeur"></canvas></div></div>
+    </div>
+    <div class="charts-grid">
+      <div class="chart-card"><div class="chart-ttl">Top produits distribués (période)</div><div class="bar-chart-wrap"><canvas id="chart-rap-top-distrib"></canvas></div></div>
+      <div class="chart-card"><div class="chart-ttl">Évolution de la valeur du stock (6 mois)</div><div class="bar-chart-wrap"><canvas id="chart-rap-evol-valeur"></canvas></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-history" style="color:var(--teal)"></i>Derniers mouvements de la période</span></div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Date & Heure</th><th>Dépt</th><th>Type</th><th>Produit</th><th>Qté</th>${showP ? '<th>Valeur</th>' : ''}</tr></thead>
+        <tbody>${dernieresRows}</tbody>
+      </table></div>
+    </div>`;
+
+  // ── Stock & dormant : santé du catalogue ────────────────────
+  const sectionStock = `
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-heartbeat" style="color:var(--teal)"></i>Santé du catalogue</span></div>
+      <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px">
+        <div><div class="kpi-lbl">Coût moyen des sorties</div><div class="kpi-val" style="font-size:18px">${showP ? fmt(Math.round(coutMoySortie)) + ' MGA' : '—'}</div><div class="kpi-s">${showP ? 'sur la période sélectionnée' : 'montants masqués'}</div></div>
+        <div><div class="kpi-lbl">Produits actifs / inactifs</div><div class="kpi-val" style="font-size:18px">${nbActifsProd} / ${nbInactifsProd}</div><div class="kpi-s">${nbAmort} amortissable(s)</div></div>
+        <div><div class="kpi-lbl">Unités en stock</div><div class="kpi-val" style="font-size:18px">${fmt(nbUnites)}</div><div class="kpi-s">toutes références visibles</div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-category" style="color:#4f46e5"></i>Valeur moyenne par catégorie (non-amortissables)</span></div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Catégorie</th><th>Nb produits</th>${showP ? '<th>Valeur moyenne</th>' : ''}</tr></thead>
+        <tbody>${catMoyRows}</tbody>
+      </table></div>
+      ${moreRowsNote(valMoyCat.length, 8)}
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-clock-off" style="color:#f59e0b"></i>Produits sans mouvement &gt; 90 j (${sansMvt.length})</span></div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Dépt</th><th>Produit</th><th>Catégorie</th><th>Stock</th></tr></thead>
+        <tbody>${sansMvtRows}</tbody>
+      </table></div>
+      ${moreRowsNote(sansMvt.length, 10)}
+    </div>
+    ${critiques.length ? `<div class="card">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-alert-triangle" style="color:#dc2626"></i>Alertes stock (${critiques.length})</span></div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Dépt</th><th>Produit</th><th>Stock</th><th>Seuil</th></tr></thead>
+        <tbody>${critRows}</tbody>
+      </table></div>
+      ${moreRowsNote(critiques.length, 8)}
+    </div>` : ''}`;
+
+  // ── Actifs : vision légère, sans dupliquer Amortissement ────
+  const sectionActifs = canSeeActifs ? `
+    <div class="info-banner" style="margin-bottom:14px;flex-wrap:wrap">
+      <i class="ti ti-info-circle" style="color:#0ea5e9"></i>
+      <div>Vue patrimoniale légère. Le registre complet et l'amortissement restent sur la page <strong>Amortissement</strong>.</div>
+      <div style="margin-left:auto">${btn('Ouvrir Amortissement', '#4f46e5', true, "goto('amortissement')", 'ti-arrow-right')}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi" style="border-left-color:#7c3aed"><div class="kpi-lbl">Actifs créés sur la période</div><div class="kpi-val">${actifsCreesPeriode}</div><div class="kpi-s">date d'entrée</div></div>
+      <div class="kpi" style="border-left-color:#dc2626"><div class="kpi-lbl">Actifs sortis sur la période</div><div class="kpi-val">${actifsSortisPeriode}</div><div class="kpi-s">sorties individuelles</div></div>
+    </div>
+    ${actifsVisibles.length ? `
+    <div class="chart-card">
+      <div class="chart-ttl">Répartition des actifs par statut (${actifsVisibles.length})</div>
+      <div class="bar-chart-wrap" style="height:220px"><canvas id="chart-rap-actifs-statut"></canvas></div>
+    </div>` : `<div class="info-banner">
+      <i class="ti ti-devices-off" style="color:#94a3b8"></i>
+      <div>Aucun actif individuel visible pour votre périmètre.</div>
+    </div>`}` : '';
+
+  let sectionHtml = sectionSynthese;
+  if (tab === 'hebdo')        sectionHtml = sectionHebdo;
+  else if (tab === 'periode') sectionHtml = sectionPeriode;
+  else if (tab === 'stock')   sectionHtml = sectionStock;
+  else if (tab === 'actifs')  sectionHtml = sectionActifs;
+
+  const tabSubs = {
+    synthese: 'Pilotage rapide — période sélectionnée',
+    hebdo:    'Flux opérationnels de la semaine (lundi → dimanche)',
+    periode:  'Analyse des mouvements et de la valeur sur la période sélectionnée',
+    stock:    'Santé du catalogue, produits dormants et alertes',
+    actifs:   'Vision légère du patrimoine amortissable',
+  };
+  const tabsHtml = tabs.map(t => btn(
+    t.lbl,
+    t.id === tab ? '#4f46e5' : '#64748b',
+    t.id !== tab,
+    `setRapportsTab('${t.id}')`,
+    t.icon
+  )).join('');
+
+  return `<p class="page-title">Rapports & Statistiques</p>
+    <p class="page-sub">${tabSubs[tab] || tabSubs.synthese}</p>
+    <div class="btn-row" style="margin-bottom:16px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow)">${tabsHtml}</div>
+    ${sectionHtml}`;
 }
 
 // ── AMORTISSEMENT ──
@@ -1017,7 +1148,7 @@ function drawCharts() {
   const tc=(cs.getPropertyValue('--text3').trim()||'#94a3b8');
   const baseOpts={ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} };
   if (document.getElementById('chart-mvt')) {
-    const mvtAll=[...fMvtIT(),...fMvtFin()];
+    const mvtAll=fMvtScope();
     const dates=[...new Set(mvtAll.map(m=>(m.created_at||m.date).slice(0,10)))].sort().slice(-8);
     new Chart(document.getElementById('chart-mvt'),{type:'bar',data:{labels:dates.map(d=>new Date(d).toLocaleDateString('fr-FR',{day:'2-digit',month:'short'})),datasets:[{label:'Entrées',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Entrée').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#10b981',borderRadius:4},{label:'Sorties',data:dates.map(d=>mvtAll.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Sortie').reduce((s,m)=>s+m.qty,0)),backgroundColor:'#ef4444',borderRadius:4}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
@@ -1057,7 +1188,7 @@ function drawCharts() {
   if (document.getElementById('chart-mvt-30')) {
     const today=new Date();const days=[];
     for(let i=29;i>=0;i--){const d=new Date(today);d.setDate(d.getDate()-i);days.push(d.toISOString().split('T')[0]);}
-    const all=[...ST.mouvements];
+    const all=fMvtScope();
     new Chart(document.getElementById('chart-mvt-30'),{type:'line',data:{labels:days.map(d=>{const x=new Date(d);return `${x.getDate()}/${x.getMonth()+1}`;}),datasets:[{label:'Entrées',data:days.map(d=>all.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Entrée').reduce((s,m)=>s+m.qty,0)),borderColor:'#10b981',tension:.35,fill:false,pointRadius:2},{label:'Sorties',data:days.map(d=>all.filter(m=>(m.created_at||m.date).slice(0,10)===d&&m.type==='Sortie').reduce((s,m)=>s+m.qty,0)),borderColor:'#ef4444',tension:.35,fill:false,pointRadius:2}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:8},maxTicksLimit:10},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
   // FIX : ces deux graphiques utilisent désormais ST.actifs (source réelle des
@@ -1105,6 +1236,8 @@ function drawCharts() {
   }
 
   // ═══ NOUVEAUX GRAPHIQUES — RAPPORTS (Point 3) ═══
+  // UX : seule la section Rapports active est rendue ; les gardes
+  // `getElementById(...)` évitent toute création Chart.js sur canvas absent.
   if (document.getElementById('chart-rap-cat-valeur')) {
     const data = valeurMoyenneParCategorie().slice(0,8);
     new Chart(document.getElementById('chart-rap-cat-valeur'),{type:'bar',data:{labels:data.map(c=>c.cat),datasets:[{data:data.map(c=>Math.round(c.total/1e3)),backgroundColor:'#4f46e5',borderRadius:4}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9},callback:v=>v+'K'},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
@@ -1112,7 +1245,8 @@ function drawCharts() {
   if (document.getElementById('chart-rap-evol-mensuel')) {
     const today=new Date(); const months=[];
     for(let i=5;i>=0;i--) months.push(new Date(today.getFullYear(), today.getMonth()-i, 1));
-    const all=[...ST.mouvements];
+    // UX : ne jamais exposer les mouvements hors périmètre de droits.
+    const all=fMvtScope();
     const labels=months.map(d=>d.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}));
     const entrees=months.map(mDate=>{
       const next=new Date(mDate.getFullYear(),mDate.getMonth()+1,1);
@@ -1125,13 +1259,9 @@ function drawCharts() {
     new Chart(document.getElementById('chart-rap-evol-mensuel'),{type:'bar',data:{labels,datasets:[{label:'Entrées',data:entrees,backgroundColor:'#10b981',borderRadius:3},{label:'Sorties',data:sorties,backgroundColor:'#ef4444',borderRadius:3}]},options:{...baseOpts,plugins:{legend:{display:true,labels:{font:{size:10},boxWidth:9}}},scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{color:gc}}}}});
   }
   if (document.getElementById('chart-rap-top-distrib')) {
-    const mvtPeriode=[...fMvtIT(),...fMvtFin()].filter(m=>m.type==='Sortie');
+    const mvtPeriode=fMvtScope().filter(m=>m.type==='Sortie');
     const top=topProduitsDistribues(mvtPeriode,10);
     new Chart(document.getElementById('chart-rap-top-distrib'),{type:'bar',data:{labels:top.map(p=>p.nom.slice(0,16)),datasets:[{data:top.map(p=>p.qty),backgroundColor:'#f59e0b',borderRadius:3}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9}},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
-  }
-  if (document.getElementById('chart-rap-top-couteux')) {
-    const top=topProduitsCouteux(10);
-    new Chart(document.getElementById('chart-rap-top-couteux'),{type:'bar',data:{labels:top.map(p=>p.nom.slice(0,16)),datasets:[{data:top.map(p=>Math.round(p.valeur/1e3)),backgroundColor:top.map(p=>p.amort?'#7c3aed':'#4f46e5'),borderRadius:3}]},options:{...baseOpts,indexAxis:'y',scales:{x:{ticks:{color:tc,font:{size:9},callback:v=>v+'K'},grid:{color:gc}},y:{ticks:{color:tc,font:{size:9}},grid:{display:false}}}}});
   }
   if (document.getElementById('chart-rap-actifs-statut')) {
     const rep=repartitionActifsStatut();
