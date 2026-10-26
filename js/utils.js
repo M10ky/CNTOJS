@@ -17,6 +17,8 @@ const ST = {
   toastTimer: null,
   dateFrom: null,
   dateTo: null,
+  weekRef: null,          // ← Rapport hebdo : date de référence de la semaine affichée
+  weekFlux: {},           // ← Rapport hebdo : cache des flux par semaine (chargement ciblé)
   produits: [],
   mouvements: [],
   demandes: [],
@@ -94,6 +96,43 @@ function inRange(isoStr) {
   if (ST.dateFrom && d < new Date(ST.dateFrom)) return false;
   if (ST.dateTo   && d > new Date(ST.dateTo))   return false;
   return true;
+}
+
+// ─── SEMAINE CALENDAIRE (lundi → dimanche) ───────────────────
+// Règle métier : rapport hebdo lun–dim, date transaction = created_at || date
+function startOfWeekMonday(ref = new Date()) {
+  const d = new Date(ref);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();            // 0 = dimanche, 1 = lundi…
+  d.setDate(d.getDate() - ((day + 6) % 7));
+  return d;
+}
+
+function endOfWeekSunday(ref = new Date()) {
+  const d = startOfWeekMonday(ref);
+  d.setDate(d.getDate() + 6);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function inWeek(isoOrDate, weekStart, weekEnd) {
+  if (!isoOrDate) return false;
+  // Les dates seules (YYYY-MM-DD) sont interprétées en heure locale,
+  // alors que les ISO complets gardent leur fuseau d'origine.
+  const s = String(isoOrDate);
+  const t = /^\d{4}-\d{2}-\d{2}$/.test(s)
+    ? new Date(s + 'T00:00:00').getTime()
+    : new Date(isoOrDate).getTime();
+  return Number.isFinite(t) && t >= weekStart.getTime() && t <= weekEnd.getTime();
+}
+
+function labelSemaine(weekStart, weekEnd) {
+  return `Semaine du ${fmtDate(weekStart)} au ${fmtDate(weekEnd)}`;
+}
+
+function weekDayKey(d) {
+  const x = new Date(d), pad = n => String(n).padStart(2, '0');
+  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`;
 }
 
 const fMvtIT  = () => ST.mouvements.filter(m => m.dept==='IT'      && inRange(m.created_at||m.date));

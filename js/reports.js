@@ -320,8 +320,450 @@ function renderDashboard() {
       </table></div></div>`:''}`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//   RAPPORT HEBDOMADAIRE — FLUX DE TRANSACTIONS (lundi → dimanche)
+//   Règle métier : date transaction = created_at || date
+// ═══════════════════════════════════════════════════════════════
+
+const WEEK_CACHE_TTL = 30000; // ms — rafraîchissement léger du cache hebdo
+
+/** Filtre Supabase : (created_at dans la plage) OU (created_at absent ET date dans la plage).
+ *  La plage "date" est volontairement élargie d'un jour de chaque côté (fuseaux),
+ *  le filtrage final exact étant refait côté client par inWeek(). */
+function weekQueryFilter(start, end) {
+  const sIso = start.toISOString(), eIso = end.toISOString();
+  const sDay = weekDayKey(new Date(start.getTime() - 86400000));
+  const eDay = weekDayKey(new Date(end.getTime()   + 86400000));
+  return `and(created_at.gte.${sIso},created_at.lte.${eIso}),and(created_at.is.null,date.gte.${sDay},date.lte.${eDay})`;
+}
+
+/** Lecture paginée (PostgREST plafonne à 1000 lignes par requête) pour une semaine. */
+async function fetchWeekRows(table, start, end, depts) {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    let q = db.from(table).select('*')
+      .or(weekQueryFilter(start, end))
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + 999);
+    if (depts.length) q = q.in('dept', depts);
+    const { data, error } = await q;
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return rows;
+}
+
+/** Charge de façon ciblée les mouvements (S et S−1) + les demandes de la semaine.
+ *  Les prêts et actifs sont déjà chargés intégralement (ST.prets / ST.actifs). */
+async function loadWeekFluxData(weekStart, weekEnd) {
+  const prevStart = new Date(weekStart); prevStart.setDate(prevStart.getDate() - 7);
+  const prevEnd   = new Date(weekEnd);   prevEnd.setDate(prevEnd.getDate() - 7);
+
+  const depts = [];
+  if (canSeeIT())  depts.push('IT');
+  if (canSeeFin()) depts.push('Finance');
+
+  const [mvts, dms] = await Promise.all([
+    fetchWeekRows('mouvements', prevStart, weekEnd, depts),
+    fetchWeekRows('demandes',   weekStart, weekEnd, depts),
+  ]);
+
+  return {
+    current: {
+      mouvements: mvts.filter(m => inWeek(m.created_at || m.date, weekStart, weekEnd)),
+      demandes:   dms.filter(d => inWeek(d.created_at || d.date, weekStart, weekEnd)),
+    },
+    previous: {
+      mouvements: mvts.filter(m => inWeek(m.created_at || m.date, prevStart, prevEnd)),
+    },
+  };
+}
+
+/** Cache + déclenchement du chargement asynchrone (re-render quand prêt). */
+function ensureWeekFluxData(weekStart, weekEnd) {
+  const key = weekDayKey(weekStart);
+  ST.weekFlux = ST.weekFlux || {};
+  const existing = ST.weekFlux[key];
+  if (existing && (existing.loading || Date.now() - (existing.ts || 0) < WEEK_CACHE_TTL)) return existing;
+
+  const entry = existing || {};
+  entry.loading = true;
+  entry.error = null;
+  ST.weekFlux[key] = entry;
+
+  loadWeekFluxData(weekStart, weekEnd)
+    .then(data => {
+      entry.data = data;
+      entry.loading = false;
+      entry.ts = Date.now();
+      if (ST.tab === 'rapports') render();
+    })
+    .catch(err => {
+      console.error('[rapport hebdo]', err);
+      entry.loading = false;
+      entry.error = err?.message || 'Erreur de chargement';
+      entry.ts = Date.now();
+      if (ST.tab === 'rapports') render();
+    });
+
+  return entry;
+}
+
+window.weekPrev = () => {
+  const s = startOfWeekMonday(ST.weekRef || new Date());
+  s.setDate(s.getDate() - 7);
+  ST.weekRef = s;
+  render();
+};
+window.weekToday = () => {
+  ST.weekRef = new Date();
+  if (ST.weekFlux) delete ST.weekFlux[weekDayKey(startOfWeekMonday(ST.weekRef))];
+  render();
+};
+window.weekNext = () => {
+  const s = startOfWeekMonday(ST.weekRef || new Date());
+  s.setDate(s.getDate() + 7);
+  if (s.getTime() > startOfWeekMonday(new Date()).getTime()) return;
+  ST.weekRef = s;
+  render();
+};
+window.weekRetry = () => {
+  const key = weekDayKey(startOfWeekMonday(ST.weekRef || new Date()));
+  if (ST.weekFlux) delete ST.weekFlux[key];
+  render();
+};
+
+/** Top N produits d'un sens de flux (entrées ou sorties). */
+function topProduitsFlux(mouvements, type, n = 5) {
+  const map = {};
+  mouvements.filter(m => m.type === type).forEach(m => {
+    const key = m.produit_id || m.produit_nom || '—';
+    if (!map[key]) map[key] = { nom: m.produit_nom || m.produit_id || '—', qty: 0, valeur: 0 };
+    map[key].qty    += (m.qty || 0);
+    map[key].valeur += (m.valeur || 0);
+  });
+  return Object.values(map).sort((a, b) => b.qty - a.qty || b.valeur - a.valeur).slice(0, n);
+}
+
+function variationLabel(current, previous, money = false) {
+  const delta = (current || 0) - (previous || 0);
+  const arrow = delta > 0 ? '↗' : delta < 0 ? '↘' : '→';
+  const deltaTxt = `${delta > 0 ? '+' : ''}${fmt(delta)}${money ? ' MGA' : ''}`;
+  const pct = previous === 0
+    ? (current === 0 ? '0 %' : 'n/a')
+    : `${delta > 0 ? '+' : ''}${Math.round((delta / Math.abs(previous)) * 1000) / 10} %`;
+  return `${arrow} ${deltaTxt} · ${pct} vs S−1`;
+}
+
+/** Agrégats purs d'un département pour la semaine + comparaison S−1. */
+function computeWeekDeptStats(dept, entry, weekStart, weekEnd) {
+  const current  = entry?.data?.current  || { mouvements: [], demandes: [] };
+  const previous = entry?.data?.previous || { mouvements: [] };
+
+  const mvts     = (current.mouvements || []).filter(m => m.dept === dept);
+  const prevMvts = (previous.mouvements || []).filter(m => m.dept === dept);
+  const dms      = (current.demandes || []).filter(d => d.dept === dept);
+
+  const entrees = mvts.filter(m => m.type === STATUS_MVT.ENTREE);
+  const sorties = mvts.filter(m => m.type === STATUS_MVT.SORTIE);
+  const prevEntrees = prevMvts.filter(m => m.type === STATUS_MVT.ENTREE);
+  const prevSorties = prevMvts.filter(m => m.type === STATUS_MVT.SORTIE);
+
+  const sumQty = list => list.reduce((s, m) => s + (m.qty || 0), 0);
+  const sumVal = list => list.reduce((s, m) => s + (m.valeur || 0), 0);
+
+  const prets  = (ST.prets  || []).filter(p => p.dept === dept);
+  const actifs = (ST.actifs || []).filter(a => a.dept === dept);
+
+  const pretsDemarres = prets.filter(p => inWeek(p.date_debut || p.created_at, weekStart, weekEnd));
+  const pretsRendus   = prets.filter(p => p.date_retour_reelle && inWeek(p.date_retour_reelle, weekStart, weekEnd));
+  const pretsRetard   = prets.filter(p => p.statut === STATUS_PRET.EN_RETARD);
+
+  const actifsCrees = actifs.filter(a => inWeek(a.date_entree, weekStart, weekEnd));
+
+  const sortieParActif = {};
+  sorties.filter(m => m.actif_id).forEach(m => {
+    if (!sortieParActif[m.actif_id]) sortieParActif[m.actif_id] = m;
+  });
+  const actifsSortis = Object.keys(sortieParActif).map(id => {
+    const a = actifs.find(x => x.id === id);
+    return { ...(a || { id, produit_nom: '—', dept }), sortie: sortieParActif[id] };
+  });
+
+  const demandes = {
+    total:    dms.length,
+    validees: dms.filter(d => d.statut === STATUS_DEMANDE.VALIDE).length,
+    refusees: dms.filter(d => d.statut === STATUS_DEMANDE.REFUSE).length,
+    attente:  dms.filter(d => d.statut === STATUS_DEMANDE.EN_ATTENTE).length,
+  };
+
+  const daily = [];
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(weekStart); day.setDate(day.getDate() + i);
+    const dStart = new Date(day); dStart.setHours(0, 0, 0, 0);
+    const dEnd   = new Date(day); dEnd.setHours(23, 59, 59, 999);
+    const dayMvts = mvts.filter(m => inWeek(m.created_at || m.date, dStart, dEnd));
+    const dIn  = dayMvts.filter(m => m.type === STATUS_MVT.ENTREE);
+    const dOut = dayMvts.filter(m => m.type === STATUS_MVT.SORTIE);
+    const vIn  = sumVal(dIn), vOut = sumVal(dOut);
+    daily.push({
+      date: day,
+      label: day.toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: '2-digit' }),
+      qtyIn: sumQty(dIn), qtyOut: sumQty(dOut),
+      valIn: vIn, valOut: vOut, net: vIn - vOut,
+    });
+  }
+
+  return {
+    dept, mvts, prevMvts, dms, entrees, sorties, prevEntrees, prevSorties,
+    qtyIn: sumQty(entrees), qtyOut: sumQty(sorties),
+    valIn: sumVal(entrees), valOut: sumVal(sorties),
+    net: sumVal(entrees) - sumVal(sorties),
+    nbMvt: mvts.length, nbMvtPrev: prevMvts.length,
+    produitsTouches: new Set(mvts.map(m => m.produit_id || m.produit_nom).filter(Boolean)).size,
+    topEntrees: topProduitsFlux(mvts, STATUS_MVT.ENTREE, 5),
+    topSorties: topProduitsFlux(mvts, STATUS_MVT.SORTIE, 5),
+    daily, demandes, prets, pretsDemarres, pretsRendus, pretsRetard,
+    actifs, actifsCrees, actifsSortis,
+    hasData: mvts.length || dms.length || actifsCrees.length || actifsSortis.length || pretsDemarres.length || pretsRendus.length,
+  };
+}
+
+function weekEmptyRow(cols, msg) {
+  return `<tr><td colspan="${cols}" style="text-align:center;color:var(--text3);padding:14px">${msg}</td></tr>`;
+}
+
+function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
+  const isIT = dept === 'IT';
+  const color = isIT ? '#4f46e5' : '#10b981';
+  const canSeeAssets = isIT ? (canManIT() || isLecteur()) : (canManFin() || isLecteur());
+  const deptLbl = isIT ? 'IT' : 'Finance';
+
+  const kpis = [
+    { lbl: 'Mouvements',    val: stats.nbMvt,       s: variationLabel(stats.nbMvt, stats.nbMvtPrev), c: '#6366f1' },
+    { lbl: 'Entrées (qté)', val: fmt(stats.qtyIn),  s: `${stats.entrees.length} mouvement(s)`,       c: '#16a34a' },
+    { lbl: 'Sorties (qté)', val: fmt(stats.qtyOut), s: `${stats.sorties.length} mouvement(s)`,       c: '#dc2626' },
+  ];
+  if (showP) {
+    kpis.push({ lbl: 'Valeur entrées', val: fmt(stats.valIn) + ' MGA', s: variationLabel(stats.valIn, stats.prevEntrees.reduce((s, m) => s + (m.valeur || 0), 0), true), c: '#16a34a' });
+    kpis.push({ lbl: 'Valeur sorties', val: fmt(stats.valOut) + ' MGA', s: variationLabel(stats.valOut, stats.prevSorties.reduce((s, m) => s + (m.valeur || 0), 0), true), c: '#dc2626' });
+    kpis.push({ lbl: 'Solde net',      val: fmt(stats.net) + ' MGA',    s: 'entrées − sorties', c: stats.net >= 0 ? '#16a34a' : '#dc2626' });
+  }
+  kpis.push({ lbl: 'Produits touchés', val: stats.produitsTouches, s: 'références distinctes', c: '#0ea5e9' });
+  kpis.push({ lbl: 'Demandes créées',  val: stats.demandes.total,  s: `${stats.demandes.validees} validée(s) · ${stats.demandes.refusees} refusée(s) · ${stats.demandes.attente} en attente`, c: '#f59e0b' });
+  if (canSeeAssets) {
+    kpis.push({ lbl: 'Actifs créés',     val: stats.actifsCrees.length, s: 'entrées amortissables', c: '#7c3aed' });
+    kpis.push({ lbl: 'Actifs sortis',    val: stats.actifsSortis.length, s: 'sorties individuelles', c: '#dc2626' });
+    kpis.push({ lbl: 'Prêts démarrés',   val: stats.pretsDemarres.length, s: 'sur la semaine', c: '#3b82f6' });
+    kpis.push({ lbl: 'Prêts rendus',     val: stats.pretsRendus.length,   s: 'sur la semaine', c: '#10b981' });
+    kpis.push({ lbl: 'Prêts en retard',  val: stats.pretsRetard.length,   s: 'stock actuel', c: stats.pretsRetard.length ? '#ef4444' : '#22c55e' });
+  }
+
+  const dayCols = showP ? 6 : 3;
+  const dayRows = stats.daily.map(d => {
+    if (showP) {
+      return `<tr>
+        <td style="font-weight:600;text-transform:capitalize">${d.label}</td>
+        <td style="font-weight:700;color:#16a34a">${fmt(d.qtyIn)}</td>
+        <td style="font-weight:700;color:#dc2626">${fmt(d.qtyOut)}</td>
+        <td>${fmt(d.valIn)} MGA</td>
+        <td>${fmt(d.valOut)} MGA</td>
+        <td style="font-weight:700;color:${d.net >= 0 ? '#16a34a' : '#dc2626'}">${fmt(d.net)} MGA</td>
+      </tr>`;
+    }
+    return `<tr>
+      <td style="font-weight:600;text-transform:capitalize">${d.label}</td>
+      <td style="font-weight:700;color:#16a34a">${fmt(d.qtyIn)}</td>
+      <td style="font-weight:700;color:#dc2626">${fmt(d.qtyOut)}</td>
+    </tr>`;
+  }).join('');
+
+  const topRows = (list, empty) => list.map((p, i) => `<tr>
+    <td style="font-weight:700;color:var(--text3)">#${i + 1}</td>
+    <td style="font-weight:600">${p.nom}</td>
+    <td style="font-weight:700">${fmt(p.qty)}</td>
+    ${showP ? `<td style="font-family:var(--mono);font-size:12px">${fmt(p.valeur)} MGA</td>` : ''}
+  </tr>`).join('') || weekEmptyRow(showP ? 4 : 3, empty);
+
+  const demRows = [...stats.dms]
+    .sort((a, b) => new Date(b.created_at || b.date) - new Date(a.created_at || a.date))
+    .slice(0, 10)
+    .map(d => `<tr>
+      <td>${fmtDTSplit(d.created_at || d.date)}</td>
+      <td style="font-weight:500">${d.demandeur || '—'}</td>
+      <td>${d.produit || '—'}</td>
+      <td style="font-weight:700">${d.qty || 0}</td>
+      <td>${statBadge(d.statut)}</td>
+    </tr>`).join('') || weekEmptyRow(5, 'Aucune demande créée cette semaine');
+
+  const actifCreesRows = stats.actifsCrees.map(a => `<tr>
+    <td>${fmtDTSplit(a.date_entree)}</td>
+    <td><code class="actif-id">${a.id}</code></td>
+    <td style="font-weight:500">${a.produit_nom || '—'}</td>
+    <td>${a.statut || '—'}</td>
+  </tr>`).join('') || weekEmptyRow(4, 'Aucun actif créé cette semaine');
+
+  const actifSortisRows = stats.actifsSortis.map(a => `<tr>
+    <td>${fmtDTSplit(a.sortie.created_at || a.sortie.date)}</td>
+    <td><code class="actif-id">${a.id}</code></td>
+    <td style="font-weight:500">${a.produit_nom || '—'}</td>
+    <td>${a.statut || '—'}</td>
+  </tr>`).join('') || weekEmptyRow(4, 'Aucun actif sorti cette semaine');
+
+  const pretLigne = p => `<tr>
+    <td>${fmtDTSplit(p._date)}</td>
+    <td><code class="actif-id">${getActifNumero(p) || '—'}</code></td>
+    <td style="font-weight:500">${p.produit_nom || '—'}</td>
+    <td>${p.emprunteur || '—'}</td>
+    <td>${pretStatutBadge(p.statut)}</td>
+  </tr>`;
+  const pretsDemarresRows = stats.pretsDemarres.map(p => pretLigne({ ...p, _date: p.date_debut || p.created_at })).join('')
+    || weekEmptyRow(5, 'Aucun prêt démarré cette semaine');
+  const pretsRendusRows = stats.pretsRendus.map(p => pretLigne({ ...p, _date: p.date_retour_reelle })).join('')
+    || weekEmptyRow(5, 'Aucun prêt rendu cette semaine');
+
+  const emptyBanner = stats.hasData ? '' : `<div class="info-banner" style="background:var(--warn-bg);border-color:var(--warn-bd);color:var(--warn-fg)">
+      <i class="ti ti-calendar-off" style="color:#f59e0b"></i>
+      <div>Aucune transaction enregistrée pour <strong>${deptLbl}</strong> sur cette semaine.</div>
+    </div>`;
+
+  return `
+    <div class="card" style="border-left:3px solid ${color};margin-bottom:14px">
+      <div class="card-hd">
+        <span class="card-ttl"><i class="ti ti-${isIT ? 'device-laptop' : 'cash'}" style="color:${color}"></i>${deptLbl} — flux de la semaine</span>
+        <div class="btn-row">
+          ${btn('↓ Export CSV semaine', color, true, `exportRapportHebdoCSV('${dept}')`, 'ti-download')}
+        </div>
+      </div>
+      <div style="padding:14px 16px">
+        ${emptyBanner}
+        <div class="kpi-grid">${kpis.map(k => `<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s || ''}</div></div>`).join('')}</div>
+        <div class="chart-ttl" style="margin:4px 0 8px"><i class="ti ti-calendar-stats" style="color:${color}"></i>Flux jour par jour (lun → dim)</div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr>
+            <th>Jour</th><th>Entrées (qté)</th><th>Sorties (qté)</th>
+            ${showP ? '<th>Valeur entrées</th><th>Valeur sorties</th><th>Net</th>' : ''}
+          </tr></thead>
+          <tbody>${dayRows || weekEmptyRow(dayCols, 'Aucune donnée')}</tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
+        <div class="card-hd"><span class="card-ttl"><i class="ti ti-trending-up" style="color:#dc2626"></i>Top 5 produits sortis</span></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>#</th><th>Produit</th><th>Qté</th>${showP ? '<th>Valeur</th>' : ''}</tr></thead>
+          <tbody>${topRows(stats.topSorties, 'Aucune sortie cette semaine')}</tbody>
+        </table></div>
+      </div>
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
+        <div class="card-hd"><span class="card-ttl"><i class="ti ti-trending-down" style="color:#16a34a"></i>Top 5 produits entrés</span></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>#</th><th>Produit</th><th>Qté</th>${showP ? '<th>Valeur</th>' : ''}</tr></thead>
+          <tbody>${topRows(stats.topEntrees, 'Aucune entrée cette semaine')}</tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-clipboard-list" style="color:#f59e0b"></i>Demandes de la semaine (${stats.demandes.total})</span></div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Date</th><th>Demandeur</th><th>Produit</th><th>Qté</th><th>Statut</th></tr></thead>
+        <tbody>${demRows}</tbody>
+      </table></div>
+      ${stats.dms.length > 10 ? `<div style="padding:8px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border)">… et ${stats.dms.length - 10} autre(s) demande(s) — voir l'export CSV.</div>` : ''}
+    </div>
+
+    ${canSeeAssets ? `
+    <div class="charts-grid">
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
+        <div class="card-hd"><span class="card-ttl"><i class="ti ti-devices" style="color:#7c3aed"></i>Actifs créés (${stats.actifsCrees.length})</span></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Date</th><th>N° actif</th><th>Produit</th><th>Statut</th></tr></thead>
+          <tbody>${actifCreesRows}</tbody>
+        </table></div>
+        <div class="card-hd" style="border-top:1px solid var(--border)"><span class="card-ttl"><i class="ti ti-device-desktop-off" style="color:#dc2626"></i>Actifs sortis (${stats.actifsSortis.length})</span></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Date sortie</th><th>N° actif</th><th>Produit</th><th>Statut</th></tr></thead>
+          <tbody>${actifSortisRows}</tbody>
+        </table></div>
+      </div>
+      <div class="card" style="box-shadow:none;border:1px solid var(--border);margin-bottom:0">
+        <div class="card-hd"><span class="card-ttl"><i class="ti ti-transfer" style="color:#3b82f6"></i>Prêts démarrés (${stats.pretsDemarres.length})</span></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Date début</th><th>Actif</th><th>Produit</th><th>Emprunteur</th><th>Statut</th></tr></thead>
+          <tbody>${pretsDemarresRows}</tbody>
+        </table></div>
+        <div class="card-hd" style="border-top:1px solid var(--border)"><span class="card-ttl"><i class="ti ti-transfer-in" style="color:#10b981"></i>Prêts rendus (${stats.pretsRendus.length})</span></div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>Date retour</th><th>Actif</th><th>Produit</th><th>Emprunteur</th><th>Statut</th></tr></thead>
+          <tbody>${pretsRendusRows}</tbody>
+        </table></div>
+      </div>
+    </div>` : ''}
+  `;
+}
+
+function renderRapportHebdoSection(weekStart, weekEnd, entry) {
+  const showP = canSeePrix();
+  const isCurrent = weekStart.getTime() === startOfWeekMonday(new Date()).getTime();
+  const selector = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-right:auto">
+        <i class="ti ti-calendar-week" style="color:var(--teal)"></i> ${labelSemaine(weekStart, weekEnd)}
+      </div>
+      ${btn('← Semaine précédente', '#64748b', true, 'weekPrev()', 'ti-arrow-left')}
+      ${btn('Cette semaine', '#4f46e5', true, 'weekToday()', 'ti-calendar')}
+      <button class="btn btn-outline" style="border-color:#94a3b8;color:#94a3b8;${isCurrent ? 'opacity:.45;cursor:not-allowed' : ''}" ${isCurrent ? 'disabled' : ''} onclick="${isCurrent ? '' : 'weekNext()'}">
+        <i class="ti ti-arrow-right"></i> Semaine suivante →
+      </button>
+    </div>`;
+
+  let body;
+  if (entry.loading && !entry.data) {
+    body = `<div class="info-banner"><i class="ti ti-loader-2" style="color:var(--teal)"></i><div>Chargement du rapport hebdomadaire…</div></div>`;
+  } else if (entry.error) {
+    body = `<div class="info-banner" style="background:var(--err-bg);border-color:var(--err-bd);color:var(--err-fg)">
+      <i class="ti ti-alert-circle" style="color:#dc2626"></i>
+      <div>Impossible de charger le rapport : ${entry.error} · <span style="text-decoration:underline;cursor:pointer" onclick="weekRetry()">Réessayer</span></div>
+    </div>`;
+  } else {
+    const depts = [];
+    if (canSeeIT())  depts.push('IT');
+    if (canSeeFin()) depts.push('Finance');
+    body = depts.length
+      ? depts.map(dept => renderWeekDeptBlock(dept, computeWeekDeptStats(dept, entry, weekStart, weekEnd), weekStart, weekEnd, showP)).join('')
+      : `<div class="info-banner"><i class="ti ti-lock"></i><div>Aucun département accessible.</div></div>`;
+  }
+
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-hd">
+        <span class="card-ttl"><i class="ti ti-calendar-week" style="color:var(--teal)"></i>Rapport hebdomadaire — Flux de transactions</span>
+        <span class="tag" style="color:var(--text2);background:var(--kbd-bg)">${showP ? 'Montants visibles' : 'Montants masqués'}</span>
+      </div>
+      <div style="padding:14px 16px">
+        <div class="info-banner" style="margin-bottom:14px">
+          <i class="ti ti-info-circle" style="color:#0ea5e9"></i>
+          <div>Semaine <strong>lundi → dimanche</strong> · date de transaction = <code>created_at || date</code>. Le rapport est indépendant du filtre de période de la barre supérieure.</div>
+        </div>
+        ${selector}
+      </div>
+    </div>
+    ${body}
+  `;
+}
+
 // ── RAPPORTS — TABLEAU DE BORD DÉCISIONNEL (Point 3) ──
 function renderRapports() {
+  const weekStart = startOfWeekMonday(ST.weekRef || new Date());
+  const weekEnd   = endOfWeekSunday(weekStart);
+  const weekEntry = ensureWeekFluxData(weekStart, weekEnd);
+  const weeklySection = renderRapportHebdoSection(weekStart, weekEnd, weekEntry);
+
   const prodsVisibles = getProduitsVisibles();
   const vIT  = ST.produits.filter(p => p.dept === 'IT').reduce((s, p) => s + getValeurStockActuel(p.id), 0);
   const vFin = ST.produits.filter(p => p.dept === 'Finance').reduce((s, p) => s + getValeurStockActuel(p.id), 0);
@@ -389,6 +831,8 @@ function renderRapports() {
 
   return `<p class="page-title">Rapports & Statistiques</p>
     <p class="page-sub">Tableau de bord décisionnel — période sélectionnée</p>
+
+    ${weeklySection}
 
     <div class="kpi-grid">${kpis.map(k=>`<div class="kpi" style="border-left-color:${k.c}"><div class="kpi-lbl">${k.lbl}</div><div class="kpi-val">${k.val}</div><div class="kpi-s">${k.s||''}</div></div>`).join('')}</div>
 

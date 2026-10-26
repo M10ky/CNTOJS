@@ -336,3 +336,94 @@ window.exportAmortissementCSV = () => {
 
   exportToCSV(rows, headers, `amortissement_${todayFileDate()}.csv`);
 };
+
+// ─── Rapport hebdomadaire — flux de transactions (lundi → dimanche) ───
+// Règle métier : date transaction = created_at || date
+window.exportRapportHebdoCSV = (dept) => {
+  if (!canSeeHist()) { showToast('Accès restreint', 'err'); return; }
+  if (dept === 'IT'      && !canSeeIT())  { showToast('Accès restreint', 'err'); return; }
+  if (dept === 'Finance' && !canSeeFin()) { showToast('Accès restreint', 'err'); return; }
+
+  const weekStart = startOfWeekMonday(ST.weekRef || new Date());
+  const weekEnd   = endOfWeekSunday(weekStart);
+  const key       = weekDayKey(weekStart);
+  const entry     = ST.weekFlux && ST.weekFlux[key];
+  if (!entry || entry.loading || !entry.data) {
+    showToast('Rapport hebdomadaire en cours de chargement — réessayez dans un instant', 'err');
+    return;
+  }
+
+  const stats = computeWeekDeptStats(dept, entry, weekStart, weekEnd);
+  const showP = canSeePrix();
+  const showAssets = dept === 'IT' ? (canManIT() || isLecteur()) : (canManFin() || isLecteur());
+
+  const headers = ['Section', 'ID / Réf.', 'Date', 'Type / Statut', 'Produit / Actif', 'Qté'];
+  if (showP) headers.push('Valeur (MGA)');
+  headers.push('Destinataire / Emprunteur', 'Fournisseur / Agent', 'Détail');
+
+  const rows = [];
+  const row = (section, id, date, type, produit, qty, valeur, dest, agent, detail) => {
+    const r = [section, id || '', date || '', type || '', produit || '', qty == null ? '' : qty];
+    if (showP) r.push(valeur == null ? '' : valeur);
+    r.push(dest || '', agent || '', detail || '');
+    return r;
+  };
+
+  rows.push([`EN-TÊTE — ${dept} — ${labelSemaine(weekStart, weekEnd)}`]);
+  rows.push(['RÈGLE', 'Semaine lundi → dimanche', 'Date transaction = created_at || date']);
+  rows.push([]);
+
+  rows.push(['MOUVEMENTS']);
+  [...stats.mvts]
+    .sort((a, b) => new Date(a.created_at || a.date) - new Date(b.created_at || b.date))
+    .forEach(m => rows.push(row(
+      'Mouvement', m.id, fmtDT(m.created_at || m.date), m.type, m.produit_nom || '', m.qty,
+      m.valeur || 0, m.destination || '', [m.fournisseur, m.user_name].filter(Boolean).join(' · '),
+      [m.actif_id, m.ref_document, m.observation].filter(Boolean).join(' · ')
+    )));
+
+  rows.push([]);
+  rows.push(['DEMANDES']);
+  [...stats.dms]
+    .sort((a, b) => new Date(a.created_at || a.date) - new Date(b.created_at || b.date))
+    .forEach(d => rows.push(row(
+      'Demande', d.id, fmtDT(d.created_at || d.date), d.statut, d.produit || '', d.qty,
+      null, d.dest || '', d.demandeur || '', d.motif || ''
+    )));
+
+  if (showAssets) {
+    rows.push([]);
+    rows.push(['ACTIFS CRÉÉS']);
+    stats.actifsCrees.forEach(a => rows.push(row(
+      'Actif créé', a.id, fmtDT(a.date_entree), a.statut, a.produit_nom || '', 1,
+      a.valeur_achat || 0, a.emplacement || '', '', a.categorie || ''
+    )));
+
+    rows.push([]);
+    rows.push(['ACTIFS SORTIS']);
+    stats.actifsSortis.forEach(a => rows.push(row(
+      'Actif sorti', a.id, fmtDT(a.sortie.created_at || a.sortie.date), a.statut || 'Sorti', a.produit_nom || '', 1,
+      a.sortie.valeur || a.valeur_achat || 0, '', a.sortie.user_name || '', a.categorie || ''
+    )));
+
+    const actifById = new Map((ST.actifs || []).map(a => [a.id, a]));
+    const valeurPret = p => (actifById.get(getActifNumero(p)) || {}).valeur_achat || 0;
+
+    rows.push([]);
+    rows.push(['PRÊTS DÉMARRÉS']);
+    stats.pretsDemarres.forEach(p => rows.push(row(
+      'Prêt démarré', p.id, fmtDT(p.date_debut || p.created_at), p.statut, getActifNumero(p) || '',
+      1, valeurPret(p), p.emprunteur || '', p.valideur || '', p.motif || ''
+    )));
+
+    rows.push([]);
+    rows.push(['PRÊTS RENDUS']);
+    stats.pretsRendus.forEach(p => rows.push(row(
+      'Prêt rendu', p.id, fmtDT(p.date_retour_reelle), p.statut, getActifNumero(p) || '',
+      1, valeurPret(p), p.emprunteur || '', '', p.motif || ''
+    )));
+  }
+
+  const fname = `rapport_hebdo_${dept.toLowerCase()}_${weekDayKey(weekStart).replace(/-/g, '')}_${weekDayKey(weekEnd).replace(/-/g, '')}.csv`;
+  exportToCSV(rows, headers, fname);
+};
