@@ -424,6 +424,50 @@ window.exportRapportHebdoCSV = (dept) => {
     )));
   }
 
+  // Activité par agent
+  rows.push([]);
+  rows.push(['ACTIVITÉ PAR AGENT']);
+  if (showP) {
+    rows.push(['Agent', 'Dept', 'Total', 'Entrées', 'Sorties', 'Qty entrées', 'Qty sorties', 'Valeur entrées', 'Valeur sorties']);
+  } else {
+    rows.push(['Agent', 'Dept', 'Total', 'Entrées', 'Sorties', 'Qty entrées', 'Qty sorties']);
+  }
+  const agentMap = {};
+  (stats.mvts || []).forEach(m => {
+    const key = (m.user_id != null && m.user_id !== '') ? `id:${m.user_id}` : `name:${m.user_name || m.agent || '—'}`;
+    if (!agentMap[key]) {
+      agentMap[key] = {
+        agent: m.user_name || m.agent || '—',
+        dept: m.dept || dept,
+        total: 0, entrees: 0, sorties: 0,
+        qtyEntree: 0, qtySortie: 0,
+        valEntree: 0, valSortie: 0
+      };
+    }
+    agentMap[key].total += 1;
+    if (m.type === 'Entrée' || m.type === STATUS_MVT?.ENTREE) {
+      agentMap[key].entrees += 1;
+      agentMap[key].qtyEntree += (m.qty || 0);
+      agentMap[key].valEntree += (m.valeur || 0);
+    } else if (m.type === 'Sortie' || m.type === STATUS_MVT?.SORTIE) {
+      agentMap[key].sorties += 1;
+      agentMap[key].qtySortie += (m.qty || 0);
+      agentMap[key].valSortie += (m.valeur || 0);
+    }
+  });
+  const agentRowsArr = Object.values(agentMap).filter(x => x.total > 0).sort((a, b) => b.total - a.total);
+  if (agentRowsArr.length === 0) {
+    rows.push(['Aucune transaction cette semaine', '', '', '', '', '', '']);
+  } else {
+    agentRowsArr.forEach(a => {
+      if (showP) {
+        rows.push([a.agent, a.dept, a.total, a.entrees, a.sorties, a.qtyEntree, a.qtySortie, a.valEntree, a.valSortie]);
+      } else {
+        rows.push([a.agent, a.dept, a.total, a.entrees, a.sorties, a.qtyEntree, a.qtySortie]);
+      }
+    });
+  }
+
   const fname = `rapport_hebdo_${dept.toLowerCase()}_${weekDayKey(weekStart).replace(/-/g, '')}_${weekDayKey(weekEnd).replace(/-/g, '')}.csv`;
   exportToCSV(rows, headers, fname);
 };

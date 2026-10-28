@@ -470,6 +470,44 @@ function variationLabel(current, previous, money = false) {
   return `${arrow} ${deltaTxt} · ${pct} vs S−1`;
 }
 
+// Règle métier : brief stats hebdo par agent — total transactions (Entrée/Sortie) sur la semaine lun–dim
+function statsAgentsSemaine(mouvementsSemaine) {
+  const list = Array.isArray(mouvementsSemaine) ? mouvementsSemaine : [];
+  const map = {};
+  list.forEach(m => {
+    if (!m) return;
+    const key = (m.user_id != null && m.user_id !== '') ? `id:${m.user_id}` : `name:${m.user_name || m.agent || '—'}`;
+    if (!map[key]) {
+      map[key] = {
+        user_id: m.user_id || null,
+        agent: m.user_name || m.agent || '—',
+        total: 0,
+        entrees: 0,
+        sorties: 0,
+        qtyEntree: 0,
+        qtySortie: 0,
+        valEntree: 0,
+        valSortie: 0,
+      };
+    }
+    map[key].total += 1;
+    if (m.type === STATUS_MVT.ENTREE || m.type === 'Entrée') {
+      map[key].entrees += 1;
+      map[key].qtyEntree += (m.qty || 0);
+      map[key].valEntree += (m.valeur || 0);
+    } else if (m.type === STATUS_MVT.SORTIE || m.type === 'Sortie') {
+      map[key].sorties += 1;
+      map[key].qtySortie += (m.qty || 0);
+      map[key].valSortie += (m.valeur || 0);
+    } else {
+      // Au cas où - compter dans total mais pas classer spécifiquement si type inconnu
+    }
+  });
+  return Object.values(map)
+    .filter(x => x.total > 0)
+    .sort((a, b) => b.total - a.total || (a.agent || '').localeCompare(b.agent || ''));
+}
+
 /** Agrégats purs d'un département pour la semaine + comparaison S−1. */
 function computeWeekDeptStats(dept, entry, weekStart, weekEnd) {
   const current  = entry?.data?.current  || { mouvements: [], demandes: [] };
@@ -654,6 +692,41 @@ function renderWeekDeptBlock(dept, stats, weekStart, weekEnd, showP) {
           </tr></thead>
           <tbody>${dayRows || weekEmptyRow(dayCols, 'Aucune donnée')}</tbody>
         </table></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-hd"><span class="card-ttl"><i class="ti ti-users" style="color:${color}"></i>Activité par agent</span></div>
+      <div style="overflow-x:auto">
+        ${(() => {
+          const agentStats = statsAgentsSemaine(stats.mvts || []);
+          if (!agentStats.length) {
+            return `<div style="padding:14px 16px;color:var(--text3);text-align:center">Aucune transaction cette semaine</div>`;
+          }
+          const rows = agentStats.map(a => {
+            if (showP) {
+              return `<tr>
+                <td style="font-weight:600">${a.agent || '—'}</td>
+                <td style="font-weight:800">${fmt(a.total)}</td>
+                <td style="font-weight:700;color:#16a34a">${fmt(a.entrees)}</td>
+                <td style="font-weight:700;color:#dc2626">${fmt(a.sorties)}</td>
+                <td>${fmt(a.qtyEntree)} / ${fmt(a.qtySortie)}</td>
+                <td>${fmt(a.valEntree)} MGA / ${fmt(a.valSortie)} MGA</td>
+              </tr>`;
+            }
+            return `<tr>
+              <td style="font-weight:600">${a.agent || '—'}</td>
+              <td style="font-weight:800">${fmt(a.total)}</td>
+              <td style="font-weight:700;color:#16a34a">${fmt(a.entrees)}</td>
+              <td style="font-weight:700;color:#dc2626">${fmt(a.sorties)}</td>
+              <td>${fmt(a.qtyEntree)} / ${fmt(a.qtySortie)}</td>
+            </tr>`;
+          }).join('');
+          const head = showP
+            ? `<thead><tr><th>Agent</th><th>Total transactions</th><th>Entrées</th><th>Sorties</th><th>Qté Entrées / Sorties</th><th>Valeur Entrées / Sorties</th></tr></thead>`
+            : `<thead><tr><th>Agent</th><th>Total transactions</th><th>Entrées</th><th>Sorties</th><th>Qté Entrées / Sorties</th></tr></thead>`;
+          return `<table>${head}<tbody>${rows}</tbody></table>`;
+        })()}
       </div>
     </div>
 
