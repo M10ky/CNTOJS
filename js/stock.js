@@ -112,6 +112,23 @@ function toLocalInputStr(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// Règle métier v1 : correction prix/valeur par l’auteur ou Admin — qty/produit/type intouchables
+function canEditMvt(m) {
+  if (!m) return false;
+  if (isAdmin()) return true;
+  if (ST.user?.id && m.user_id && m.user_id === ST.user.id) {
+    if (m.dept === 'IT') return !!canManIT();
+    if (m.dept === 'Finance') return !!canManFin();
+    return true;
+  }
+  if (ST.profile?.name && m.user_name && m.user_name === ST.profile.name) {
+    if (m.dept === 'IT') return !!canManIT();
+    if (m.dept === 'Finance') return !!canManFin();
+    return true;
+  }
+  return false;
+}
+
 // inputEl = <input id="f-date-mvt"> (datetime-local).
 // Retourne { date, ts, manual } ou { error }.
 // manual=false → comportement historique (todayStr() + nowISO()).
@@ -1154,6 +1171,48 @@ function renderModal() {
         ${btn('Annuler','#94a3b8',true,'closeModal()')}
         <button id="btn-submit-edit" class="btn btn-solid" style="background:${color};border-color:${color}" onclick="submitEdit()">✓ Enregistrer</button></div>`;
   }
+  if (type === 'editMvt') {
+    const mv = ST.modal.mv || {};
+    title = '✏ Corriger le mouvement';
+    const color = mv.dept === 'IT' ? '#4f46e5' : '#10b981';
+    const prod = (ST.produits||[]).find(p=>p.id===mv.produit_id);
+    const destOpts = (ST.params.destinations||[]).map(d=>`<option value="${escQ(d)}" ${d===mv.destination?'selected':''}>${d}</option>`).join('');
+    const emplOpts = ((ST.params.emplacements||[]).length>0?ST.params.emplacements:['Stock Principal']).map(e=>`<option value="${escQ(e)}" ${e===mv.emplacement?'selected':''}>${e}</option>`).join('');
+    const fourOpts = ((ST.params.fournisseurs||[]).length>0?ST.params.fournisseurs:[]).map(f=>`<option value="${escQ(f)}" ${f===mv.fournisseur?'selected':''}>${f}</option>`).join('');
+    const prixUnitCur = (mv.qty && mv.valeur != null) ? Math.round((mv.valeur||0)/mv.qty) : (mv.valeur||0);
+    body = `
+      <div class="form-2col">
+        <div class="form-row"><label class="form-lbl">Type</label><input value="${mv.type||''}" disabled class="field-readonly"></div>
+        <div class="form-row"><label class="form-lbl">Département</label><input value="${mv.dept||''}" disabled class="field-readonly" style="font-weight:700;color:${color}"></div>
+      </div>
+      <div class="form-2col">
+        <div class="form-row"><label class="form-lbl">Produit</label><input value="${mv.produit_nom||prod?.nom||''}" disabled class="field-readonly"></div>
+        <div class="form-row"><label class="form-lbl">Quantité</label><input value="${mv.qty||0}" disabled class="field-readonly"></div>
+      </div>
+      <div class="form-2col">
+        <div class="form-row"><label class="form-lbl">Date & heure</label><input value="${fmtDT(mv.created_at||mv.date)}" disabled class="field-readonly"></div>
+        <div class="form-row"><label class="form-lbl">Agent</label><input value="${mv.user_name||''}" disabled class="field-readonly"></div>
+      </div>
+      ${mv.actif_id ? `<div class="form-row"><label class="form-lbl">N° Actif</label><input value="${mv.actif_id}" disabled class="field-readonly"><code class="actif-id">${mv.actif_id}</code></div>` : ''}
+      <div class="form-row"><label class="form-lbl">Prix unitaire (MGA) <span class="req">*</span></label>
+        <input id="f-editmvt-prix-unit" type="number" min="0" value="${prixUnitCur}"></div>
+      <div class="form-row"><label class="form-lbl">Destination</label>
+        <select id="f-editmvt-dest"><option value="">—</option>${destOpts}</select></div>
+      <div class="form-2col">
+        <div class="form-row"><label class="form-lbl">Emplacement</label>
+          <select id="f-editmvt-empl"><option value="">—</option>${emplOpts}</select></div>
+        <div class="form-row"><label class="form-lbl">Fournisseur</label>
+          <select id="f-editmvt-four"><option value="">—</option>${fourOpts}</select></div>
+      </div>
+      <div class="form-row"><label class="form-lbl">Réf. / N° document</label>
+        <input id="f-editmvt-ref" value="${escQ(mv.ref_document||'')}" placeholder="BL-..."></div>
+      <div class="form-row"><label class="form-lbl">Observation</label>
+        <input id="f-editmvt-obs" value="${escQ(mv.observation||'')}" placeholder="Précisions..."></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">
+        ${btn('Annuler','#94a3b8',true,'closeModal()')}
+        <button id="btn-submit-editmvt" class="btn btn-solid" style="background:${color};border-color:${color}" onclick="submitEditMvt()">✓ Enregistrer</button></div>`;
+  }
+
   const ov=document.createElement('div');
   ov.id='modal-el'; ov.className='overlay';
   ov.innerHTML=`<div class="modal" onclick="event.stopPropagation()">
@@ -1169,6 +1228,85 @@ function renderModal() {
 }
 
 window.openMvt     = (t,d,p) => { ST.modal={type:'mvt',mvtType:t,dept:d,prodId:p}; renderModal(); };
+window.openEditMvt  = (mvtId) => {
+  const m = (ST.mouvements||[]).find(x=>x.id===mvtId) || (ST.mouvementsEntrees||[]).find(x=>x.id===mvtId);
+  if (!m) {
+    const all = [...(ST.mouvements||[]), ...(ST.mouvementsEntrees||[])];
+    const mm = all.find(x=>x.id===mvtId);
+    if (mm) {
+      // try to find in mouvements array properly
+    }
+  }
+  const mv = (ST.mouvements||[]).find(x=>x.id===mvtId);
+  if (!mv) { showToast('Mouvement introuvable', 'err'); return; }
+  if (!canEditMvt(mv)) { showToast('Action non autorisée', 'err'); return; }
+  if (mv.dept==='IT' && !canSeeIT()) { showToast('Action non autorisée','err'); return; }
+  if (mv.dept==='Finance' && !canSeeFin()) { showToast('Action non autorisée','err'); return; }
+  ST.modal = { type:'editMvt', mv };
+  renderModal();
+};
+
+window.submitEditMvt = async () => {
+  if (ST.isSubmitting) { showToast('Une opération est déjà en cours…', 'err'); return; }
+  const mv = ST.modal?.mv;
+  if (!mv) { showToast('Mouvement introuvable', 'err'); return; }
+  if (!canEditMvt(mv)) { showToast('Action non autorisée', 'err'); return; }
+  if (mv.dept==='IT' && !canManIT() && !isAdmin()) { showToast('Action non autorisée','err'); return; }
+  if (mv.dept==='Finance' && !canManFin() && !isAdmin()) { showToast('Action non autorisée','err'); return; }
+
+  const prixUnitEl = document.getElementById('f-editmvt-prix-unit');
+  let prixUnit = parseFloat(prixUnitEl?.value);
+  if (isNaN(prixUnit) || prixUnit < 0) prixUnit = 0;
+
+  const dest = document.getElementById('f-editmvt-dest')?.value || '';
+  const empl = document.getElementById('f-editmvt-empl')?.value || '';
+  const four = document.getElementById('f-editmvt-four')?.value || '';
+  const refd = document.getElementById('f-editmvt-ref')?.value || '';
+  const obs  = document.getElementById('f-editmvt-obs')?.value || '';
+
+  const qty = mv.qty || 0;
+  const prod = (ST.produits||[]).find(p=>p.id===mv.produit_id);
+
+  await withSubmitLock('#btn-submit-editmvt', async () => {
+    try {
+      let nouvelleValeur = Math.round(prixUnit * qty);
+
+      // Règle métier : prix 0 autorisé seulement si cohérent avec les règles existantes
+      if (nouvelleValeur === 0 && mv.type === 'Entrée' && prod && prod.is_amortissable !== true) {
+        // Cohérent avec submitMvt : interdit pour entrée non amortissable si c’est la règle actuelle
+        // On autorise si l'utilisateur précise contexte amortissable/existant? On reste strict
+        showToast('Le prix unitaire doit être supérieur à 0 pour une entrée non amortissable', 'err');
+        return;
+      }
+
+      const updateMvt = {
+        valeur: nouvelleValeur,
+        destination: dest,
+        emplacement: empl,
+        fournisseur: four,
+        ref_document: refd,
+        observation: obs
+      };
+
+      const { error: mErr } = await db.from('mouvements').update(updateMvt).eq('id', mv.id);
+      if (mErr) throw mErr;
+
+      // Si Entrée avec actif_id : aligner aussi actifs_individuels.valeur_achat
+      if (mv.type === 'Entrée' && mv.actif_id) {
+        try {
+          await db.from('actifs_individuels').update({ valeur_achat: nouvelleValeur }).eq('id', mv.actif_id);
+        } catch(e) { /* ne pas bloquer */ }
+      }
+
+      closeModal();
+      showToast('Mouvement corrigé');
+      await Promise.all([loadProduits(), loadMouvements(), loadMouvementsEntrees(), loadActifs()]);
+      render();
+    } catch (err) {
+      showToast('Erreur : ' + (err.message||err), 'err');
+    }
+  });
+};
 window.openAdd     = d       => { ST.modal={type:'add',dept:d}; renderModal(); };
 window.openDemande = d       => { ST.modal={type:'dem',dept:d}; renderModal(); };
 window.closeModal  = ()      => { ST.modal=null; document.getElementById('modal-el')?.remove(); };
@@ -1604,8 +1742,9 @@ function renderHistorique() {
     <td style="font-size:11px;color:var(--text2)">${highlight(h.emplacement||h.dest||'—',q)}</td>
     <td style="font-size:11px;color:var(--text3)">${highlight(h.actor,q)}</td>
     <td style="font-size:11px;color:var(--text3);max-width:120px">${highlight(h.detail||'',q).slice(0,60)}</td>
+    <td style="text-align:right">${h.src==='Mouvement' && canEditMvt(h) ? btn('✏','var(--text3)',true,`openEditMvt('${h.id}')`,'ti-pencil') : ''}</td>
   </tr>`).join('');
-  const emptyRow = !filtered.length ? `<tr class="no-result-row"><td colspan="9"><div class="nri">🔍</div><div class="nrt">Aucun résultat pour "${q}"</div><div style="font-size:11px;margin-top:4px"><a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">Réinitialiser</a></div></td></tr>` : '';
+  const emptyRow = !filtered.length ? `<tr class="no-result-row"><td colspan="10"><div class="nri">🔍</div><div class="nrt">Aucun résultat pour "${q}"</div><div style="font-size:11px;margin-top:4px"><a href="#" onclick="resetInlineFilters();return false;" style="color:var(--teal)">Réinitialiser</a></div></td></tr>` : '';
   return `<p class="page-title">Historique Complet</p>
     <p class="page-sub">${filtered.length} / ${allItems.length} opération(s)</p>
     <div class="btn-row" style="margin-bottom:12px">
@@ -1613,7 +1752,7 @@ function renderHistorique() {
     </div>
     ${searchBar}
     <div class="card"><div style="overflow-x:auto"><table>
-      <thead><tr>${['Date & Heure','Dépt','Catégorie','Type/Statut','Produit','Qté','Empl./Dest.','Acteur','Détail'].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <thead><tr>${['Date & Heure','Dépt','Catégorie','Type/Statut','Produit','Qté','Empl./Dest.','Acteur','Détail',''].map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${rows||emptyRow}</tbody>
     </table></div></div>`;
 }
